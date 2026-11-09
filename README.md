@@ -1,6 +1,8 @@
-# QR File Transfer
+# AirQR — Offline QR-Code File Transfer
 
-Transfer files between two computers using QR codes — no network, no cables, no cloud. One PC shows QR codes on its screen; the other scans them with a camera.
+Transfer files between a PC and a phone (or PC↔PC) using only animated QR codes on the sender's screen and the receiver's camera. No internet, Wi-Fi, Bluetooth, mobile data, cloud, account, pairing, or server required.
+
+**Status:** v1 implementation (Python). Production roadmap in [PLAN.md](PLAN.md).
 
 ## How It Works
 
@@ -63,8 +65,11 @@ On the sender machine. Press ENTER when both sides are ready.
 ### Full CLI Reference
 
 ```
-python main.py <role> [options]
+airqr send <source> [--encrypt] [--passphrase P] [--display image|ascii] [--camera N]
+airqr receive [--dest DIR] [--resume] [--display image|ascii] [--camera N] [--passphrase P]
 ```
+
+Legacy form still works: `python main.py sender ...` / `python main.py receiver ...`.
 
 | Argument | Description |
 |----------|-------------|

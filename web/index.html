@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>AirQR Web</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #0b0d12; color: #e8ecf2; }
+    .card { max-width: 720px; margin: auto; padding: 2rem; border-radius: 16px; background: #151922; }
+    button { padding: 0.8rem 1.2rem; border-radius: 10px; border: none; background: #4f8cff; color: white; font-size: 1rem; cursor: pointer; }
+    .note { opacity: 0.7; font-size: 0.9rem; margin-top: 1rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>AirQR (Web Fallback)</h1>
+    <p>Offline-capable PWA sender/receiver using camera and QR. For large or high-speed transfers, use the native desktop/mobile apps.</p>
+    <button id="start">Enable Camera</button>
+    <video id="video" autoplay playsinline style="width:100%;margin-top:1rem;border-radius:12px;"></video>
+    <p class="note">Browser limitations: lower throughput, manual save, no background transfer. WebCodecs/Workers/WASM acceleration recommended for production.</p>
+  </div>
+  <script src="app.js"></script>
+</body>
+</html>
