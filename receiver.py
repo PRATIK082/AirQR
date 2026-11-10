@@ -1,214 +1,238 @@
+"""Receiver: scan QR stream, reassemble files, verify integrity."""
 import os
+import sys
 import time
-from protocol import *
+import argparse
+import getpass
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from core import protocol as P
+from core.protocol import (Packet, FLAG_COMPRESSED, FLAG_ENCRYPTED, FLAG_FINAL,
+                           FLAG_MANIFEST, FLAG_DONE, FLAG_PARITY, FLAG_ACK,
+                           make_ack, parse_ack)
+from core.manifest import parse_manifest
+from core.compression import decompress
+from core.crypto import derive_key, decrypt, make_nonce
+from core.chunker import assemble_chunks
+from core.integrity import sha256_file
+from core.recovery import rs_recover
 from qr_utils import QRDisplay, QRScanner
-from state import save_state, load_state, clear_state
 
 
-DATA_MSG_TYPES = {MSG_FILE_HEADER, MSG_CHUNK, MSG_FILE_FOOTER, MSG_MANIFEST, MSG_DONE}
-
-
-def _is_data(data: str) -> bool:
+def is_data_any(s):
     try:
-        return decode_msg(data).get("t") in DATA_MSG_TYPES
+        p = Packet.from_qr(s)
+        return not (p.flags & FLAG_ACK)
     except Exception:
         return False
 
 
-class Receiver:
-    def __init__(self, dest_dir: str, display_mode: str = None):
-        self.dest_dir = dest_dir
-        self.display = QRDisplay(display_mode or DISPLAY_MODE)
+def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, resume=False):
+    os.makedirs(dest, exist_ok=True)
+    display = QRDisplay(display_mode)
+    scanner = QRScanner(camera_id)
+    scanner.__enter__()
 
-        self.current_file = ""
-        self.current_path = ""
-        self.temp_path = ""
-        self.expected_chunks = 0
-        self.expected_md5 = ""
-        self.chunks: dict[int, bytes] = {}
-        self.completed_files: set[str] = set()
-        self.received_count = 0
+    transfer_id = None
+    manifest = None
+    manifest_chunks = {}
+    manifest_total = 0
+    files_data = {}  # fid -> dict
+    done_received = False
+    key = None
+    encrypted = False
+    salt = None
 
-    def run(self, resume: bool = False):
-        print(f"\n{'=' * 60}")
-        print(f"  QR FILE TRANSFER - RECEIVER")
-        print(f"{'=' * 60}")
-        print(f"  Destination : {os.path.abspath(self.dest_dir)}")
-        print(f"  Mode        : {self.display.mode.upper()}")
-        print(f"{'=' * 60}\n")
+    def process_packet(pkt):
+        nonlocal transfer_id, manifest, key, encrypted, salt, passphrase
+        if transfer_id is None:
+            transfer_id = pkt.transfer_id
+        if pkt.flags & FLAG_MANIFEST:
+            manifest_chunks[pkt.chunk_index] = pkt.payload
+            # ack
+            ack = make_ack(pkt.transfer_id, pkt.file_id, pkt.chunk_index, 0)
+            display.show(ack.to_qr())
+            if len(manifest_chunks) == pkt.total_chunks and manifest is None:
+                mbytes = assemble_chunks(manifest_chunks, pkt.total_chunks)
+                manifest = parse_manifest(mbytes)
+                encrypted = any(f.get("encrypted") for f in manifest["files"])
+                salt = manifest["salt"]
+                if encrypted:
+                    if not passphrase:
+                        # prompt
+                        nonlocal_pass = None
+                    # derive key later when passphrase known
+                parity_count = manifest["parity_count"]
+                for fi, f in enumerate(manifest["files"]):
+                    fid = fi + 1
+                    files_data[fid] = {
+                        "info": f, "chunks": {}, "data_count": f["chunks"],
+                        "parity_count": parity_count, "received": set(),
+                    }
+                print(f"Manifest received: {len(manifest['files'])} files")
+            return
+        if pkt.flags & FLAG_DONE:
+            done_received = True
+            ack = make_ack(pkt.transfer_id, 0, 0, 0)
+            display.show(ack.to_qr())
+            return
+        fid = pkt.file_id
+        if fid not in files_data:
+            return
+        fd = files_data[fid]
+        # decrypt if needed
+        payload = pkt.payload
+        if pkt.flags & FLAG_ENCRYPTED:
+            if key is None:
+                # prompt passphrase
+                if passphrase is None:
+                    passphrase = getpass.getpass("Passphrase: ")
+                key = derive_key(passphrase, salt)
+            nonce = make_nonce(pkt.transfer_id, fid, pkt.chunk_index)
+            try:
+                payload = decrypt(payload, key, nonce)
+            except Exception as e:
+                print("Decryption failed:", e)
+                return
+        fd["chunks"][pkt.chunk_index] = payload
+        fd["received"].add(pkt.chunk_index)
+        ack = make_ack(pkt.transfer_id, fid, pkt.chunk_index, 0)
+        display.show(ack.to_qr())
+        # progress
+        dc = fd["data_count"]
+        have = sum(1 for i in range(dc) if i in fd["chunks"])
+        print(f"\rFile {fid}: {have}/{dc} chunks", end="", flush=True)
 
-        os.makedirs(self.dest_dir, exist_ok=True)
+    def all_complete():
+        if manifest is None:
+            return False
+        for fid, fd in files_data.items():
+            dc = fd["data_count"]
+            pc = fd["parity_count"]
+            # try recovery
+            if not all(i in fd["chunks"] for i in range(dc)):
+                recovered = rs_recover(fd["chunks"], dc, pc)
+                if recovered:
+                    for idx, b in recovered.items():
+                        fd["chunks"][idx] = b
+                        fd["received"].add(idx)
+            if not all(i in fd["chunks"] for i in range(dc)):
+                return False
+        return done_received
 
-        if resume:
-            state = load_state()
-            if state and state.get("role") == "receiver":
-                self.completed_files = set(state.get("completed_files", []))
-                self.received_count = len(self.completed_files)
-                print(f"  > Resuming -- {self.received_count} files already done\n")
+    try:
+        print("Scanning for QR codes... (press q in camera window to quit)")
+        while not all_complete():
+            raw = scanner.scan(timeout=2.0, filter_fn=is_data_any)
+            if raw is None:
+                continue
+            try:
+                pkt = Packet.from_qr(raw)
+            except Exception:
+                continue
+            process_packet(pkt)
 
-        self.display.show_text(
-            "QR File Transfer - RECEIVER\n\n"
-            "Waiting for sender...\n"
-            "Point camera at sender screen."
-        )
-
-        with QRScanner() as scanner:
-            while True:
-                data = scanner.scan(timeout=1.5, filter_fn=_is_data)
-                if not data:
+        # Recovery rounds for missing
+        for rnd in range(3):
+            if all(i in fd["chunks"] for fid, fd in files_data.items() for i in range(fd["data_count"])):
+                # all data present
+                pass
+            # check missing
+            missing_any = False
+            for fid, fd in files_data.items():
+                dc = fd["data_count"]
+                missing = [i for i in range(dc) if i not in fd["chunks"]]
+                if missing:
+                    missing_any = True
+                    nak = make_ack(transfer_id, fid, 0, 1, missing)
+                    display.show(nak.to_qr())
+                    print(f"\nRequesting {len(missing)} missing chunks for file {fid}")
+            if not missing_any:
+                break
+            # scan for retransmissions
+            end = time.time() + 4
+            while time.time() < end:
+                raw = scanner.scan(timeout=0.5, filter_fn=is_data_any)
+                if raw is None:
                     continue
-
                 try:
-                    msg = decode_msg(data)
+                    pkt = Packet.from_qr(raw)
                 except Exception:
                     continue
+                process_packet(pkt)
+            if all_complete():
+                break
 
-                t = msg.get("t")
-                if t == MSG_FILE_HEADER:
-                    self._handle_header(msg)
-                elif t == MSG_CHUNK:
-                    self._handle_chunk(msg)
-                elif t == MSG_FILE_FOOTER:
-                    self._handle_footer(msg)
-                elif t == MSG_MANIFEST:
-                    self._handle_manifest(msg)
-                elif t == MSG_DONE:
-                    self._handle_done()
-                    break
-
-        clear_state()
-        self.display.close()
-
-    # ── Internal helpers ────────────────────────────────────────
-
-    def _ack(self, idx: int, status: str):
-        """Show ACK QR and KEEP it visible until the next handler replaces it.
-        This gives the sender unlimited time to scan the ACK."""
-        self.display.show(make_ack(self.current_file, idx, status))
-        time.sleep(0.1)
-
-    # ── Message handlers ────────────────────────────────────────
-
-    def _handle_header(self, msg: dict):
-        rel_path = msg["f"]
-        n = msg["n"]
-        md5 = msg["m"]
-
-        # Duplicate header for a file already in progress: just re-ACK
-        if rel_path == self.current_file and n == self.expected_chunks and md5 == self.expected_md5 and self.chunks:
-            self._ack(-1, "ok")
-            return
-
-        # New file
-        self.expected_chunks = n
-        self.expected_md5 = md5
-        self.chunks = {}
-        self.current_file = rel_path
-
-        full_path = os.path.join(self.dest_dir, rel_path.replace("/", os.sep))
-        os.makedirs(os.path.dirname(full_path), exist_ok=True)
-        self.current_path = full_path
-        self.temp_path = full_path + ".tmp"
-
-        if os.path.exists(self.temp_path):
-            os.remove(self.temp_path)
-
-        print(f"\n  {'-' * 58}")
-        print(f"  >> {rel_path}")
-        print(f"       Chunks: {self.expected_chunks}  MD5: {self.expected_md5[:16]}...")
-
-        self._ack(-1, "ok")
-
-    def _handle_chunk(self, msg: dict):
-        rel_path = msg["f"]
-        idx = msg["i"]
-        expected_crc = msg["c"]
-
-        if rel_path != self.current_file:
-            self._ack(idx, "nak")
-            return
-
-        if idx in self.chunks:
-            self._ack(idx, "ok")
-            return
-
-        data = b64_decode(msg["d"])
-        actual_crc = crc32(data)
-        if actual_crc != expected_crc:
-            print(f"\n       X CRC mismatch chunk {idx}")
-            self._ack(idx, "nak")
-            return
-
-        self.chunks[idx] = data
-        bar = progress_bar(len(self.chunks), self.expected_chunks)
-        print(f"       Chunk {idx + 1:>{len(str(self.expected_chunks))}}/{self.expected_chunks} {bar}", end="\r")
-
-        self._ack(idx, "ok")
-
-    def _handle_footer(self, msg: dict):
-        rel_path = msg["f"]
-
-        if len(self.chunks) != self.expected_chunks:
-            print(f"\n       X Missing chunks: got {len(self.chunks)}, need {self.expected_chunks}")
-            self._ack(self.expected_chunks, "nak")
-            return
-
-        full_data = b"".join(self.chunks[i] for i in range(self.expected_chunks))
-
-        with open(self.temp_path, "wb") as f:
-            f.write(full_data)
-
-        actual_md5 = file_md5(self.temp_path)
-        if actual_md5 != self.expected_md5:
-            print(f"\n       X MD5 mismatch")
-            os.remove(self.temp_path)
-            self._ack(self.expected_chunks, "nak")
-            return
-
-        if os.path.exists(self.current_path):
-            os.remove(self.current_path)
-        os.rename(self.temp_path, self.current_path)
-
-        self.completed_files.add(rel_path)
-        self.received_count += 1
-
-        print(f"\n       > OK - {len(full_data)} bytes")
-
-        self._ack(self.expected_chunks, "ok")
-
-        save_state({
-            "role": "receiver",
-            "completed_files": list(self.completed_files),
-        })
-
-    def _handle_manifest(self, msg: dict):
-        paths = msg.get("paths", [])
-        print(f"\n  {'-' * 58}")
-        print(f"  ## Verifying {len(paths)} files...\n")
-
-        all_ok = True
-        missing = []
-        for rel_path in paths:
-            full = os.path.join(self.dest_dir, rel_path.replace("/", os.sep))
-            if os.path.exists(full):
-                print(f"    OK {rel_path}")
+        # Reassemble and save
+        print("\nVerifying and saving files...")
+        for fid, fd in files_data.items():
+            info = fd["info"]
+            dc = fd["data_count"]
+            pc = fd["parity_count"]
+            # recovery one more time
+            if not all(i in fd["chunks"] for i in range(dc)):
+                recovered = rs_recover(fd["chunks"], dc, pc)
+                if recovered:
+                    for idx, b in recovered.items():
+                        fd["chunks"][idx] = b
+            chunks_dict = {i: fd["chunks"][i] for i in range(dc) if i in fd["chunks"]}
+            compressed_data = assemble_chunks(chunks_dict, dc)
+            if compressed_data is None:
+                print(f"File {fid} incomplete, skipping")
+                continue
+            if info.get("compression", 0) == 1:
+                try:
+                    raw_data = decompress(compressed_data)
+                except Exception as e:
+                    print(f"Decompression failed: {e}")
+                    raw_data = compressed_data
             else:
-                print(f"    X  {rel_path}  -- MISSING")
-                missing.append(rel_path)
-                all_ok = False
+                raw_data = compressed_data
+            raw_data = raw_data[:info["size"]]
+            rel = info["name"]
+            out_path = os.path.join(dest, rel)
+            os.makedirs(os.path.dirname(out_path) or dest, exist_ok=True)
+            # duplicate detection
+            if os.path.exists(out_path):
+                try:
+                    if sha256_file(out_path) == info["sha256"]:
+                        print(f"Duplicate (already exists): {rel}")
+                        continue
+                except Exception:
+                    pass
+            with open(out_path, "wb") as f:
+                f.write(raw_data)
+            try:
+                os.utime(out_path, (info["mtime"], info["mtime"]))
+            except Exception:
+                pass
+            # verify
+            actual = sha256_file(out_path)
+            if actual == info["sha256"]:
+                print(f"Saved & verified: {rel} ({info['size']} bytes)")
+            else:
+                print(f"WARNING: hash mismatch for {rel}")
+                print(f"  expected {info['sha256']}")
+                print(f"  actual   {actual}")
+    finally:
+        scanner.release()
+        display.close()
 
-        print()
-        if all_ok:
-            print(f"  ++ ALL {len(paths)} FILES VERIFIED SUCCESSFULLY!")
-        else:
-            print(f"  !! {len(missing)} file(s) missing")
 
-        self._ack(-1, "ok" if all_ok else "nak")
+def main():
+    parser = argparse.ArgumentParser(prog="airqr")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_recv = sub.add_parser("receive")
+    p_recv.add_argument("--dest", default="./received")
+    p_recv.add_argument("--resume", action="store_true")
+    p_recv.add_argument("--display", default="image", choices=["image", "ascii"])
+    p_recv.add_argument("--camera", type=int, default=0)
+    p_recv.add_argument("--passphrase", default=None)
+    args = parser.parse_args()
+    if args.cmd == "receive":
+        receive_transfer(args.dest, args.passphrase, args.display, args.camera, args.resume)
 
-    def _handle_done(self):
-        print(f"\n  {'-' * 58}")
-        print(f"  OK Transfer complete! Received {self.received_count} files.")
-        if self.completed_files:
-            print()
-            for f in sorted(self.completed_files):
-                print(f"     * {f}")
+
+if __name__ == "__main__":
+    main()

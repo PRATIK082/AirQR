@@ -1,0 +1,18 @@
+{
+  "app_name": "AirQR",
+  "send": "Send",
+  "receive": "Receive",
+  "ready": "Ready",
+  "scanning": "Scanning",
+  "transferring": "Transferring",
+  "paused": "Paused",
+  "recovering": "Recovering",
+  "verifying": "Verifying",
+  "complete": "Complete",
+  "failed": "Failed",
+  "save": "Save",
+  "cancel": "Cancel",
+  "pause": "Pause",
+  "resume": "Resume",
+  "retry": "Retry"
+}

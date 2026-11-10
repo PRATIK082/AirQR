@@ -1,196 +1,251 @@
+"""Sender: read files, encode as binary QR stream, handle ACKs."""
 import os
+import sys
 import time
-from protocol import *
+import struct
+import argparse
+import getpass
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from core import protocol as P
+from core.protocol import (Packet, FLAG_COMPRESSED, FLAG_ENCRYPTED, FLAG_FINAL,
+                           FLAG_MANIFEST, FLAG_DONE, FLAG_PARITY, FLAG_ACK,
+                           make_ack, parse_ack)
+from core.manifest import collect_files, build_manifest, guess_mime
+from core.compression import should_compress, compress
+from core.crypto import derive_key, encrypt, make_nonce
+from core.chunker import chunk_bytes
+from core.integrity import sha256_file, sha256_bytes
+from core.recovery import rs_encode_chunks
+from core.adaptive import choose_chunk_size, choose_ec
 from qr_utils import QRDisplay, QRScanner
-from state import save_state, load_state, clear_state
+
+MAX_RETRIES = 3
+ACK_TIMEOUT = 2.0
+MANIFEST_CHUNK = 800
+PARITY_COUNT = 2
+RETRY_ROUNDS = 3
 
 
-def _is_ack(data: str) -> bool:
+def is_ack_transfer(s, transfer_id):
     try:
-        return decode_msg(data).get("t") == MSG_ACK
+        p = Packet.from_qr(s)
+        return bool(p.flags & FLAG_ACK) and p.transfer_id == transfer_id
     except Exception:
         return False
 
 
-def _send_with_ack(display, scanner, msg, expected_file, expected_idx):
-    """Show data QR and keep it visible while searching for matching ACK.
-    Loops on stale ACKs (wrong file/index from previous chunks)
-    until the correct ACK arrives or deadline expires."""
+def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False):
+    files = collect_files(source)
+    if not files:
+        print("No files found.")
+        return
+
+    # Prepare per-file data
+    file_meta = []  # list of dicts
+    file_plain_chunks = []  # list of list[bytes] (compressed, pre-encryption)
+    file_compressed = []  # bool
+    for f in files:
+        raw = open(f["path"], "rb").read()
+        f["mime"] = guess_mime(f["path"])
+        comp = False if web_mode else should_compress(f["path"], f["mime"])
+        if comp:
+            data = compress(raw)
+        else:
+            data = raw
+        chunk_size = choose_chunk_size(len(raw), f["mime"])
+        chunks = chunk_bytes(data, chunk_size)
+        file_plain_chunks.append(chunks)
+        file_compressed.append(comp)
+        file_meta.append({
+            "path": f["path"], "rel": f["rel"], "size": f["size"],
+            "mtime": f["mtime"], "mime": f["mime"],
+            "chunks": len(chunks), "compressed_size": len(data),
+            "compression": 1 if comp else 0,
+        })
+
+    transfer_id = os.urandom(8)
+    if web_mode:
+        passphrase = None
+    encrypted = (not web_mode) and bool(passphrase)
+    salt = transfer_id if encrypted else b"\x00" * 16
+    key = derive_key(passphrase, salt) if encrypted else None
+    parity_count = 0 if web_mode else PARITY_COUNT
+
+    sha256s = [sha256_file(f["path"]) for f in files]
+    comp_methods = [1 if c else 0 for c in file_compressed]
+    manifest_bytes = build_manifest(transfer_id, file_meta, sha256s,
+                                   comp_methods, encrypted, salt, parity_count,
+                                   choose_chunk_size(0, ""), "AirQR Sender")
+    # fix chunk_size in manifest: use per-file? manifest expects single chunk_size. Use 900.
+    # rebuild with a representative chunk size
+    chunk_size_global = 900
+    manifest_bytes = build_manifest(transfer_id, file_meta, sha256s,
+                                   comp_methods, encrypted, salt, parity_count,
+                                   chunk_size_global, "AirQR Sender")
+
+    print(f"Transfer ID: {transfer_id.hex()}")
+    print(f"Files: {len(files)}, Encrypted: {encrypted}")
+    print("Position receiver camera, then press ENTER to start.")
+    input()
+
+    display = QRDisplay(display_mode)
+    scanner = QRScanner(camera_id)
+    scanner.__enter__()
+
+    try:
+        # Send manifest
+        mchunks = chunk_bytes(manifest_bytes, MANIFEST_CHUNK)
+        mtotal = len(mchunks)
+        print(f"Sending manifest ({mtotal} chunks)...")
+        for i, mc in enumerate(mchunks):
+            pkt = Packet(transfer_id, 0xFFFFFFFF, mtotal, i, mc, FLAG_MANIFEST)
+            ok = _send_with_ack(pkt, display, scanner, transfer_id)
+            if not ok:
+                print(f"Manifest chunk {i} failed")
+
+        # Prepare file packets
+        file_packets = {}  # fid -> {chunk_index: Packet}
+        for fi, f in enumerate(files):
+            fid = fi + 1
+            plain_chunks = file_plain_chunks[fi]
+            dc = len(plain_chunks)
+            # parity over plain chunks
+            parity_plain = rs_encode_chunks(plain_chunks, parity_count) if parity_count > 0 else []
+            total = dc + len(parity_plain)
+            pkts = {}
+            # data chunks
+            for ci, chunk in enumerate(plain_chunks):
+                p = chunk
+                flags = FLAG_COMPRESSED if file_compressed[fi] else 0
+                if encrypted:
+                    nonce = make_nonce(transfer_id, fid, ci)
+                    p = encrypt(p, key, nonce)
+                    flags |= FLAG_ENCRYPTED
+                if ci == dc - 1:
+                    flags |= FLAG_FINAL
+                pkt = Packet(transfer_id, fid, total, ci, p, flags)
+                pkts[ci] = pkt
+            # parity
+            for pj, par in enumerate(parity_plain):
+                p = par
+                flags = FLAG_PARITY
+                if file_compressed[fi]:
+                    flags |= FLAG_COMPRESSED
+                if encrypted:
+                    nonce = make_nonce(transfer_id, fid, dc + pj)
+                    p = encrypt(p, key, nonce)
+                    flags |= FLAG_ENCRYPTED
+                pkt = Packet(transfer_id, fid, total, dc + pj, p, flags)
+                pkts[dc + pj] = pkt
+            file_packets[fid] = (pkts, dc, len(parity_plain))
+            print(f"Sending file {fi + 1}/{len(files)}: {f['rel']} ({dc} chunks)")
+            for ci in range(total):
+                pkt = pkts[ci]
+                ok = _send_with_ack(pkt, display, scanner, transfer_id)
+                if not ok:
+                    print(f"  chunk {ci} failed (FEC may recover)")
+
+        # Done
+        done_pkt = Packet(transfer_id, 0, 0, 0, b"", FLAG_DONE)
+        for _ in range(3):
+            display.show(done_pkt.to_qr())
+            time.sleep(0.5)
+
+        # Recovery rounds
+        for rnd in range(RETRY_ROUNDS):
+            raw = scanner.scan(timeout=3.0, filter_fn=lambda s: is_ack_transfer(s, transfer_id))
+            if not raw:
+                break
+            try:
+                ap = Packet.from_qr(raw)
+            except Exception:
+                break
+            ok, missing = parse_ack(ap)[:2] if False else (None, None)
+            _ok, _missing = _parse_ack_simple(ap)
+            if _missing is None or not _missing:
+                print("Receiver reports complete.")
+                break
+            fid = ap.file_id
+            if fid not in file_packets:
+                continue
+            pkts, dc, pc = file_packets[fid]
+            print(f"Retransmitting {len(_missing)} chunks for file {fid}")
+            for mi in _missing:
+                if mi in pkts:
+                    _send_with_ack(pkts[mi], display, scanner, transfer_id)
+
+        print("Transfer finished.")
+    finally:
+        scanner.release()
+        display.close()
+
+
+def _parse_ack_simple(ap):
+    # returns (ok_bool, missing_list)
+    pl = ap.payload
+    if not pl:
+        return True, []
+    if pl[0] == 0:
+        return True, []
+    if pl[0] == 1:
+        import struct as s
+        if len(pl) >= 5:
+            count = s.unpack("<I", pl[1:5])[0]
+            offs = 5
+            missing = list(s.unpack("<" + "I" * count, pl[offs:offs + 4 * count]))
+            return False, missing
+        return False, []
+    return False, []
+
+
+def _send_with_ack(pkt, display, scanner, transfer_id):
+    def filt(s):
+        try:
+            ap = Packet.from_qr(s)
+            return (ap.flags & FLAG_ACK and ap.transfer_id == transfer_id
+                    and ap.file_id == pkt.file_id and ap.chunk_index == pkt.chunk_index)
+        except Exception:
+            return False
+    data_str = pkt.to_qr()
     for attempt in range(MAX_RETRIES):
-        display.show(msg)
-
-        deadline = time.time() + ACK_TIMEOUT + 1
-        while time.time() < deadline:
-            data = scanner.scan(0.6, filter_fn=_is_ack)
-            if data:
-                try:
-                    m = decode_msg(data)
-                    file_match = (expected_file is None) or (m.get("f") == expected_file)
-                    idx_match = (expected_idx is None) or (m.get("i") == expected_idx)
-                    if file_match and idx_match:
-                        return m.get("s") == "ok"
-                except Exception:
+        display.show(data_str)
+        ack_str = scanner.scan(timeout=ACK_TIMEOUT, filter_fn=filt)
+        if ack_str:
+            try:
+                ap = Packet.from_qr(ack_str)
+                pl = ap.payload
+                if pl and pl[0] == 0:
+                    return True
+                if pl and pl[0] == 1:
+                    # nak -> retry
                     pass
-                # Stale ACK (e.g. from previous chunk) - brief pause,
-                # then keep scanning. The receiver will show the new
-                # ACK once it processes our current data QR.
-                time.sleep(0.1)
-            # No ACK or stale: scanner returned None or we slept, retry
-
-        if attempt < MAX_RETRIES - 1:
-            print(f"       * Retry {attempt + 1}/{MAX_RETRIES}...")
+                else:
+                    return True
+            except Exception:
+                pass
+        time.sleep(0.1)
     return False
 
 
-def run_sender(source_dir, resume=False, display_mode=None):
-    mode = display_mode or DISPLAY_MODE
-    display = QRDisplay(mode)
+def main():
+    parser = argparse.ArgumentParser(prog="airqr")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+    p_send = sub.add_parser("send")
+    p_send.add_argument("source")
+    p_send.add_argument("--encrypt", action="store_true")
+    p_send.add_argument("--passphrase", default=None)
+    p_send.add_argument("--display", default="image", choices=["image", "ascii"])
+    p_send.add_argument("--camera", type=int, default=0)
+    p_send.add_argument("--web", action="store_true", help="Web-compatible: no compression/encryption/FEC")
+    args = parser.parse_args()
+    passphrase = args.passphrase
+    if args.encrypt and not passphrase:
+        passphrase = getpass.getpass("Passphrase: ")
+    if args.cmd == "send":
+        send_transfer(args.source, passphrase, args.display, args.camera, args.web)
 
-    # --- Collect files ---
-    all_files = []
-    for root, dirs, fnames in os.walk(source_dir):
-        for f in fnames:
-            full = os.path.join(root, f)
-            rel = os.path.relpath(full, source_dir).replace("\\", "/")
-            all_files.append((rel, full))
-    all_files.sort(key=lambda x: x[0])
 
-    print(f"\n{'=' * 60}")
-    print(f"  QR FILE TRANSFER - SENDER")
-    print(f"{'=' * 60}")
-    print(f"  Source  : {os.path.abspath(source_dir)}")
-    print(f"  Files   : {len(all_files)}")
-    print(f"  Chunk   : {CHUNK_SIZE} bytes  |  Mode: {mode.upper()}")
-    print(f"{'=' * 60}\n")
-
-    if not all_files:
-        print("  No files found.")
-        display.close()
-        return
-
-    # --- Resume support ---
-    completed_files = set()
-    start_idx = 0
-    if resume:
-        state = load_state()
-        if state and state.get("role") == "sender":
-            completed_files = set(state.get("completed_files", []))
-            start_idx = state.get("current_file_idx", 0)
-            print(f"  > Resuming -- {len(completed_files)} files already done\n")
-
-    display.show_text(
-        f"Ready to send {len(all_files)} files.\n"
-        f"Point receiver camera at this screen.\n"
-        f"Press ENTER on receiver first, then here."
-    )
-    input("  Press ENTER to start...\n")
-
-    success_count = 0
-    with QRScanner() as scanner:
-        for idx, (rel_path, full_path) in enumerate(all_files):
-            if idx < start_idx:
-                continue
-            if rel_path in completed_files:
-                print(f"  >> {rel_path} (already done)")
-                success_count += 1
-                continue
-
-            print(f"\n  {'-' * 58}")
-            print(f"  [{idx + 1}/{len(all_files)}] {rel_path}")
-
-            with open(full_path, "rb") as f:
-                raw = f.read()
-            md5_val = file_md5(full_path)
-            chunks = chunk_data(raw)
-            print(f"       Size: {len(raw)} B  |  Chunks: {len(chunks)}")
-
-            # --- Header ---
-            print(f"       Header...", end=" ")
-            ok = _send_with_ack(
-                display, scanner,
-                make_header(rel_path, len(chunks), md5_val),
-                rel_path, -1,
-            )
-            if not ok:
-                print("FAILED (no ACK)")
-                continue
-            print("OK")
-
-            # --- Chunks ---
-            failed = False
-            for ci, chunk in enumerate(chunks):
-                bar = progress_bar(ci, len(chunks))
-                print(f"       Chunk {ci + 1:>{len(str(len(chunks)))}}/{len(chunks)} {bar}", end="\r")
-
-                ok = _send_with_ack(
-                    display, scanner,
-                    make_chunk(rel_path, ci, chunk),
-                    rel_path, ci,
-                )
-                if not ok:
-                    print(f"\n       X Chunk {ci + 1} failed after {MAX_RETRIES} retries")
-                    failed = True
-                    break
-
-                save_state({
-                    "role": "sender",
-                    "completed_files": list(completed_files),
-                    "current_file_idx": idx,
-                    "current_file": rel_path,
-                    "current_chunk": ci,
-                    "total_chunks": len(chunks),
-                })
-
-            if failed:
-                print()
-                continue
-
-            print(f"\r       Chunks done    {progress_bar(len(chunks), len(chunks))}  ")
-
-            # --- Footer ---
-            print(f"       Verify...", end=" ")
-            ok = _send_with_ack(
-                display, scanner,
-                make_footer(rel_path, md5_val),
-                rel_path, len(chunks),
-            )
-            if not ok:
-                print("X MD5 mismatch / no ACK")
-                continue
-            print("OK")
-
-            completed_files.add(rel_path)
-            success_count += 1
-
-            save_state({
-                "role": "sender",
-                "completed_files": list(completed_files),
-                "current_file_idx": idx + 1,
-                "current_file": "",
-                "current_chunk": -1,
-                "total_chunks": 0,
-            })
-
-        # --- Manifest ---
-        if success_count > 0:
-            print(f"\n  {'-' * 58}")
-            print(f"  Sending manifest for verification...", end=" ")
-            manifest_paths = [f for f, _ in all_files]
-            ok = _send_with_ack(
-                display, scanner,
-                make_manifest(manifest_paths),
-                None, -1,
-            )
-            if ok:
-                print("VERIFIED")
-            else:
-                print("no ACK (continuing)")
-
-        # --- Done ---
-        print(f"\n  {'-' * 58}")
-        print(f"  OK Transfer complete! {success_count} files sent.")
-        display.show(make_done())
-        time.sleep(3)
-
-    clear_state()
-    display.close()
+if __name__ == "__main__":
+    main()

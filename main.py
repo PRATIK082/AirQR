@@ -1,49 +1,29 @@
-import argparse
+#! python3.11
+"""AirQR CLI entry point."""
 import sys
-from protocol import DISPLAY_MODE
-from sender import run_sender
-from receiver import Receiver
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from sender import main as sender_main
+from receiver import main as receiver_main
 
 
 def main():
-    parser = argparse.ArgumentParser(
-        description="QR File Transfer — send files between PCs using QR codes"
-    )
-    parser.add_argument(
-        "role",
-        choices=["sender", "receiver"],
-        help="Run as sender (transmit) or receiver (receive)",
-    )
-    parser.add_argument(
-        "--source",
-        help="Source directory to send (required for sender)",
-    )
-    parser.add_argument(
-        "--dest",
-        default="./received",
-        help="Destination directory (default: ./received)",
-    )
-    parser.add_argument(
-        "--resume",
-        action="store_true",
-        help="Resume from last saved state",
-    )
-    parser.add_argument(
-        "--display",
-        choices=["image", "ascii"],
-        help=f"QR display mode (default: {DISPLAY_MODE})",
-    )
-
-    args = parser.parse_args()
-
-    if args.role == "sender":
-        if not args.source:
-            print("Error: --source is required for sender")
-            sys.exit(1)
-        run_sender(args.source, resume=args.resume, display_mode=args.display)
+    # Support both: `python main.py send ...` and `python main.py sender ...`
+    args = sys.argv[1:]
+    if len(args) >= 1 and args[0] in ("sender",):
+        args = ["send"] + args[1:]
+    if len(args) >= 1 and args[0] in ("receiver",):
+        args = ["receive"] + args[1:]
+    sys.argv = [sys.argv[0]] + args
+    if len(args) >= 1 and args[0] == "send":
+        sender_main()
+    elif len(args) >= 1 and args[0] == "receive":
+        receiver_main()
     else:
-        recv = Receiver(args.dest, display_mode=args.display)
-        recv.run(resume=args.resume)
+        # delegate to sender parser for help
+        sender_main()
 
 
 if __name__ == "__main__":

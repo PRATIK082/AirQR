@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+received/
+transfer_state.json
+.venv/
+node_modules/

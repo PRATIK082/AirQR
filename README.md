@@ -1,6 +1,8 @@
-# QR File Transfer
+# AirQR — Offline QR-Code File Transfer
 
-Transfer files between two computers using QR codes — no network, no cables, no cloud. One PC shows QR codes on its screen; the other scans them with a camera.
+Transfer files between a PC and a phone (or PC↔PC) using only animated QR codes on the sender's screen and the receiver's camera. No internet, Wi-Fi, Bluetooth, mobile data, cloud, account, pairing, or server required.
+
+**Status:** v1 implementation (Python). Production roadmap in [PLAN.md](PLAN.md).
 
 ## How It Works
 
@@ -63,8 +65,11 @@ On the sender machine. Press ENTER when both sides are ready.
 ### Full CLI Reference
 
 ```
-python main.py <role> [options]
+airqr send <source> [--encrypt] [--passphrase P] [--display image|ascii] [--camera N]
+airqr receive [--dest DIR] [--resume] [--display image|ascii] [--camera N] [--passphrase P]
 ```
+
+Legacy form still works: `python main.py sender ...` / `python main.py receiver ...`.
 
 | Argument | Description |
 |----------|-------------|
@@ -211,6 +216,41 @@ Each side uses a **filter function** so it only reads its required QR code type:
 | Receiver | `_is_data` | `fh`, `ch`, `ff`, `mf`, `done` (from sender) | `ack` |
 
 The filter keeps scanning camera frames until a matching QR code is found, preventing feedback loops from shared screens or reflections.
+
+## Demo
+
+![Sender presenting QR](docs/demo/sender.png)
+![Receiver scanning](docs/demo/receiver.png)
+![Animated demo](docs/demo/demo.gif)
+
+## Step-by-Step Usage (PC ↔ Phone)
+
+### A. PC → Phone
+1. On PC (sender):
+   - Install deps: `pip install -r requirements.txt`
+   - Run: `airqr send ./my_folder --display image`
+   - (Optional) Encrypt: `airqr send ./secret.zip --encrypt`
+2. A large QR code appears on the PC screen. Note the progress window.
+3. On phone (receiver): install/use the AirQR Web PWA (Chrome → Add to Home screen) or open the web app; tap **Enable Camera**, grant camera permission. (Native Android/iOS apps are on the roadmap in PLAN.md.)
+4. Point the phone camera at the PC screen. Keep 30–50 cm distance, avoid glare.
+5. Watch live progress (%, speed, ETA, received/missing chunks). Pause/resume available.
+6. On completion, verify SHA-256 hash shown; confirm save to Downloads.
+7. For executables/archives, a warning is shown before opening.
+
+### B. Phone → PC
+1. On phone (sender): select file/folder, tap **Show QR** (fullscreen).
+2. On PC (receiver): `airqr receive --dest ./downloads --display image`
+3. Point the PC webcam at the phone screen.
+4. Progress and verification as above.
+
+### C. Resume after interruption
+- Sender: re-run the same `airqr send ...` (stateless sender re-streams; receiver resumes via `--resume`).
+- Receiver: `airqr receive --dest ./downloads --resume` to continue from saved state.
+
+### D. Tips for reliability
+- Use high brightness, avoid reflections, keep camera steady.
+- Larger files: use `--display ascii` only if no GUI; otherwise image mode auto-sizes.
+- If chunks fail, FEC recovers a few missing frames; otherwise selective retransmission runs automatically.
 
 ### Stale ACK Handling (sender `_send_with_ack`)
 
