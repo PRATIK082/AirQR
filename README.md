@@ -217,6 +217,41 @@ Each side uses a **filter function** so it only reads its required QR code type:
 
 The filter keeps scanning camera frames until a matching QR code is found, preventing feedback loops from shared screens or reflections.
 
+## Demo
+
+![Sender presenting QR](docs/demo/sender.png)
+![Receiver scanning](docs/demo/receiver.png)
+![Animated demo](docs/demo/demo.gif)
+
+## Step-by-Step Usage (PC ↔ Phone)
+
+### A. PC → Phone
+1. On PC (sender):
+   - Install deps: `pip install -r requirements.txt`
+   - Run: `airqr send ./my_folder --display image`
+   - (Optional) Encrypt: `airqr send ./secret.zip --encrypt`
+2. A large QR code appears on the PC screen. Note the progress window.
+3. On phone (receiver): open the AirQR app (or web PWA), tap **Scan**, grant camera permission.
+4. Point the phone camera at the PC screen. Keep 30–50 cm distance, avoid glare.
+5. Watch live progress (%, speed, ETA, received/missing chunks). Pause/resume available.
+6. On completion, verify SHA-256 hash shown; confirm save to Downloads.
+7. For executables/archives, a warning is shown before opening.
+
+### B. Phone → PC
+1. On phone (sender): select file/folder, tap **Show QR** (fullscreen).
+2. On PC (receiver): `airqr receive --dest ./downloads --display image`
+3. Point the PC webcam at the phone screen.
+4. Progress and verification as above.
+
+### C. Resume after interruption
+- Sender: re-run the same `airqr send ...` (stateless sender re-streams; receiver resumes via `--resume`).
+- Receiver: `airqr receive --dest ./downloads --resume` to continue from saved state.
+
+### D. Tips for reliability
+- Use high brightness, avoid reflections, keep camera steady.
+- Larger files: use `--display ascii` only if no GUI; otherwise image mode auto-sizes.
+- If chunks fail, FEC recovers a few missing frames; otherwise selective retransmission runs automatically.
+
 ### Stale ACK Handling (sender `_send_with_ack`)
 
 When the sender finishes one chunk and moves to the next, the receiver's display may still show the PREVIOUS chunk's ACK QR. The sender's scanner finds it (type `ack` matches), but the index check fails. Instead of returning failure, the sender:
