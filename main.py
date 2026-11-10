@@ -1,3 +1,4 @@
+#! python3.11
 """AirQR CLI entry point."""
 import sys
 import os
