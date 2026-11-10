@@ -36,7 +36,7 @@ def is_ack_transfer(s, transfer_id):
         return False
 
 
-def send_transfer(source, passphrase=None, display_mode="image", camera_id=0):
+def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False):
     files = collect_files(source)
     if not files:
         print("No files found.")
@@ -49,7 +49,7 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0):
     for f in files:
         raw = open(f["path"], "rb").read()
         f["mime"] = guess_mime(f["path"])
-        comp = should_compress(f["path"], f["mime"])
+        comp = False if web_mode else should_compress(f["path"], f["mime"])
         if comp:
             data = compress(raw)
         else:
@@ -66,20 +66,23 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0):
         })
 
     transfer_id = os.urandom(8)
-    encrypted = bool(passphrase)
+    if web_mode:
+        passphrase = None
+    encrypted = (not web_mode) and bool(passphrase)
     salt = transfer_id if encrypted else b"\x00" * 16
     key = derive_key(passphrase, salt) if encrypted else None
+    parity_count = 0 if web_mode else PARITY_COUNT
 
     sha256s = [sha256_file(f["path"]) for f in files]
     comp_methods = [1 if c else 0 for c in file_compressed]
     manifest_bytes = build_manifest(transfer_id, file_meta, sha256s,
-                                   comp_methods, encrypted, salt, PARITY_COUNT,
+                                   comp_methods, encrypted, salt, parity_count,
                                    choose_chunk_size(0, ""), "AirQR Sender")
     # fix chunk_size in manifest: use per-file? manifest expects single chunk_size. Use 900.
     # rebuild with a representative chunk size
     chunk_size_global = 900
     manifest_bytes = build_manifest(transfer_id, file_meta, sha256s,
-                                   comp_methods, encrypted, salt, PARITY_COUNT,
+                                   comp_methods, encrypted, salt, parity_count,
                                    chunk_size_global, "AirQR Sender")
 
     print(f"Transfer ID: {transfer_id.hex()}")
@@ -109,7 +112,7 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0):
             plain_chunks = file_plain_chunks[fi]
             dc = len(plain_chunks)
             # parity over plain chunks
-            parity_plain = rs_encode_chunks(plain_chunks, PARITY_COUNT) if PARITY_COUNT > 0 else []
+            parity_plain = rs_encode_chunks(plain_chunks, parity_count) if parity_count > 0 else []
             total = dc + len(parity_plain)
             pkts = {}
             # data chunks
@@ -235,12 +238,13 @@ def main():
     p_send.add_argument("--passphrase", default=None)
     p_send.add_argument("--display", default="image", choices=["image", "ascii"])
     p_send.add_argument("--camera", type=int, default=0)
+    p_send.add_argument("--web", action="store_true", help="Web-compatible: no compression/encryption/FEC")
     args = parser.parse_args()
     passphrase = args.passphrase
     if args.encrypt and not passphrase:
         passphrase = getpass.getpass("Passphrase: ")
     if args.cmd == "send":
-        send_transfer(args.source, passphrase, args.display, args.camera)
+        send_transfer(args.source, passphrase, args.display, args.camera, args.web)
 
 
 if __name__ == "__main__":

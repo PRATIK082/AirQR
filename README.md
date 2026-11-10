@@ -231,7 +231,7 @@ The filter keeps scanning camera frames until a matching QR code is found, preve
    - Run: `airqr send ./my_folder --display image`
    - (Optional) Encrypt: `airqr send ./secret.zip --encrypt`
 2. A large QR code appears on the PC screen. Note the progress window.
-3. On phone (receiver): open the AirQR app (or web PWA), tap **Scan**, grant camera permission.
+3. On phone (receiver): install/use the AirQR Web PWA (Chrome → Add to Home screen) or open the web app; tap **Enable Camera**, grant camera permission. (Native Android/iOS apps are on the roadmap in PLAN.md.)
 4. Point the phone camera at the PC screen. Keep 30–50 cm distance, avoid glare.
 5. Watch live progress (%, speed, ETA, received/missing chunks). Pause/resume available.
 6. On completion, verify SHA-256 hash shown; confirm save to Downloads.
