@@ -1,2 +1,2 @@
 @echo off
-python "%~dp0main.py" %*
+py "%~dp0airqr_cli.py" %*

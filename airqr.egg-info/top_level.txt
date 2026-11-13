@@ -1,0 +1,10 @@
+airqr
+airqr_cli
+core
+main
+protocol
+qr
+qr_utils
+receiver
+sender
+state

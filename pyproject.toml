@@ -1,8 +1,15 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "airqr"
 version = "1.0.0"
-description = "Offline QR-code file transfer"
+description = "Offline QR-code file transfer for PC and mobile"
+readme = "README.md"
 requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "PRATIK082" }]
 dependencies = [
   "opencv-python>=4.8.0",
   "qrcode[pil]>=7.4",
@@ -16,3 +23,15 @@ dependencies = [
 
 [project.scripts]
 airqr = "main:main"
+
+[project.urls]
+Homepage = "https://github.com/PRATIK082/AirQR"
+
+[tool.setuptools]
+packages = ["airqr", "core", "qr"]
+py-modules = ["main", "sender", "receiver", "qr_utils", "protocol", "state", "airqr_cli"]
+
+[tool.setuptools.package-data]
+"web" = ["*"]
+"framework" = ["*"]
+"docs" = ["*"]

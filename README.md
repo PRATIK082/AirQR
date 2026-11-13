@@ -20,6 +20,22 @@ Transfer files between a PC and a phone (or PC↔PC) using only animated QR code
 - **ACK protocol**: receiver acknowledges each message with its own QR code; sender retries on timeout (3 attempts, 3s timeout)
 - **Integrity**: CRC32 per chunk + MD5 per file
 
+## Installation
+
+Install as a package (Windows / Linux / macOS):
+
+```
+pip install .
+# or editable
+pip install -e .
+```
+
+Then run:
+```
+airqr send ./my_folder
+airqr receive --dest ./downloads
+```
+
 ## Requirements
 
 - Python 3.10+

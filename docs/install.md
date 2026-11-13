@@ -1,22 +1,36 @@
 # Installation Guide
 
-## Desktop (Python v1)
+## Desktop (Python package)
 
+### Install from source (Windows / Linux / macOS)
 1. Install Python 3.10+.
 2. Clone the repo:
    ```
    git clone https://github.com/PRATIK082/AirQR.git
    cd AirQR
    ```
-3. Install dependencies:
+3. Install the package:
    ```
-   pip install -r requirements.txt
+   pip install .
    ```
+   (or editable: `pip install -e .`)
 4. Run:
    ```
    airqr send ./my_folder
    airqr receive --dest ./downloads
    ```
+
+### Run without installing
+- Windows: `py airqr_cli.py send ./my_folder` or `airqr.bat send ./my_folder`
+- macOS/Linux: `python3 airqr_cli.py send ./my_folder`
+
+## Mobile (full support via PWA)
+The web app now supports **both sending and receiving** on mobile browsers:
+1. Start framework: `python framework/run.py`
+2. On phone, open `http://<PC-IP>:8765/index.html` in Chrome.
+3. Tap **Add to Home screen** to install.
+4. Use **Receive** tab to scan; **Send** tab to pick a file and stream QR codes.
+5. Mobile web uses uncompressed transfers; PC sender should use `--web` for compatibility.
    Or on Windows without install: `python main.py send ./my_folder`.
 
 ## Web Fallback (PWA) on Mobile
