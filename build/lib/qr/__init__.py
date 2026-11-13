@@ -1,1 +1,0 @@
-"""QR encode/decode helpers."""
