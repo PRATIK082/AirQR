@@ -6,22 +6,42 @@
   <title>AirQR Web</title>
   <link rel="manifest" href="manifest.json" />
   <style>
-    body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #0b0d12; color: #e8ecf2; }
-    .card { max-width: 720px; margin: auto; padding: 2rem; border-radius: 16px; background: #151922; }
-    button { padding: 0.8rem 1.2rem; border-radius: 10px; border: none; background: #4f8cff; color: white; font-size: 1rem; cursor: pointer; }
-    .note { opacity: 0.7; font-size: 0.9rem; margin-top: 1rem; }
+    body { font-family: system-ui, sans-serif; margin: 0; padding: 1.5rem; background: #0b0d12; color: #e8ecf2; }
+    .card { max-width: 760px; margin: auto; padding: 1.5rem; border-radius: 16px; background: #151922; }
+    button, input[type=file] { padding: 0.7rem 1rem; border-radius: 10px; border: none; background: #4f8cff; color: white; font-size: 1rem; cursor: pointer; margin: 0.3rem; }
+    .note { opacity: 0.7; font-size: 0.85rem; margin-top: 1rem; }
+    #qr { margin-top: 1rem; display: flex; justify-content: center; }
+    .tabs button { background: #2a2f3a; }
+    .tabs button.active { background: #4f8cff; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>AirQR (Web Fallback)</h1>
-    <p>Offline-capable PWA sender/receiver using camera and QR. For large or high-speed transfers, use the native desktop/mobile apps.</p>
-    <button id="start">Enable Camera (Receiver)</button>
-    <video id="video" autoplay playsinline style="width:100%;margin-top:1rem;border-radius:12px;"></video>
-    <p id="status" style="margin-top:1rem;font-family:monospace;">Idle</p>
-    <p class="note">Install: Chrome menu → Add to Home screen. Web receiver supports uncompressed transfers; use desktop sender with <code>--web</code> for compatibility. For large/encrypted transfers use native apps.</p>
+    <h1>AirQR Web (PC + Mobile)</h1>
+    <div class="tabs">
+      <button id="tabRecv" class="active">Receive</button>
+      <button id="tabSend">Send</button>
+    </div>
+
+    <div id="recvPanel">
+      <button id="start">Enable Camera (Receiver)</button>
+      <video id="video" autoplay playsinline style="width:100%;margin-top:1rem;border-radius:12px;"></video>
+      <p id="status" style="margin-top:1rem;font-family:monospace;">Idle</p>
+    </div>
+
+    <div id="sendPanel" style="display:none;">
+      <input type="file" id="fileInput" multiple />
+      <button id="startSend">Start Sending</button>
+      <button id="stopSend">Stop</button>
+      <div id="qr"></div>
+      <p id="sendStatus" style="margin-top:1rem;font-family:monospace;">Idle</p>
+    </div>
+
+    <p class="note">Install: browser menu → Add to Home screen. Works offline after first load. Web uses uncompressed transfers for compatibility.</p>
   </div>
+  <script src="qrcode.min.js"></script>
   <script src="app.js"></script>
   <script src="receiver.js"></script>
+  <script src="sender.js"></script>
 </body>
 </html>

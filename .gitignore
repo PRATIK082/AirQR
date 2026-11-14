@@ -5,3 +5,7 @@ received/
 transfer_state.json
 .venv/
 node_modules/
+
+build/
+*.egg-info/
+dist/
