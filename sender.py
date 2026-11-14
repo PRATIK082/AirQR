@@ -36,7 +36,7 @@ def is_ack_transfer(s, transfer_id):
         return False
 
 
-def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False):
+def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False, broadcast=False):
     files = collect_files(source)
     if not files:
         print("No files found.")
@@ -91,6 +91,59 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     input()
 
     display = QRDisplay(display_mode)
+    if broadcast:
+        try:
+            mchunks = chunk_bytes(manifest_bytes, MANIFEST_CHUNK)
+            bpkts = []
+            for i, mc in enumerate(mchunks):
+                bpkts.append(Packet(transfer_id, 0xFFFFFFFF, len(mchunks), i, mc, FLAG_MANIFEST))
+            # prepare file packets (reuse logic)
+            file_packets_local = {}
+            for fi, f in enumerate(files):
+                fid = fi + 1
+                plain_chunks = file_plain_chunks[fi]
+                dc = len(plain_chunks)
+                parity_plain = rs_encode_chunks(plain_chunks, parity_count) if parity_count > 0 else []
+                total = dc + len(parity_plain)
+                pkts = {}
+                for ci, chunk in enumerate(plain_chunks):
+                    p = chunk
+                    flags = FLAG_COMPRESSED if file_compressed[fi] else 0
+                    if encrypted:
+                        nonce = make_nonce(transfer_id, fid, ci)
+                        p = encrypt(p, key, nonce)
+                        flags |= FLAG_ENCRYPTED
+                    if ci == dc - 1:
+                        flags |= FLAG_FINAL
+                    pkt = Packet(transfer_id, fid, total, ci, p, flags)
+                    pkts[ci] = pkt
+                for pj, par in enumerate(parity_plain):
+                    p = par
+                    flags = FLAG_PARITY
+                    if file_compressed[fi]:
+                        flags |= FLAG_COMPRESSED
+                    if encrypted:
+                        nonce = make_nonce(transfer_id, fid, dc + pj)
+                        p = encrypt(p, key, nonce)
+                        flags |= FLAG_ENCRYPTED
+                    pkt = Packet(transfer_id, fid, total, dc + pj, p, flags)
+                    pkts[dc + pj] = pkt
+                file_packets_local[fid] = pkts
+            for fid in sorted(file_packets_local):
+                for ci in sorted(file_packets_local[fid]):
+                    bpkts.append(file_packets_local[fid][ci])
+            bpkts.append(Packet(transfer_id, 0, 0, 0, b"", FLAG_DONE))
+            print("Broadcast mode: streaming packets. Press Ctrl+C to stop.")
+            while True:
+                for pkt in bpkts:
+                    display.show(pkt.to_qr())
+                    time.sleep(1.2)
+        except KeyboardInterrupt:
+            print("\nStopped.")
+        finally:
+            display.close()
+        return
+
     scanner = QRScanner(camera_id)
     scanner.__enter__()
 
@@ -239,12 +292,13 @@ def main():
     p_send.add_argument("--display", default="image", choices=["image", "ascii"])
     p_send.add_argument("--camera", type=int, default=0)
     p_send.add_argument("--web", action="store_true", help="Web-compatible: no compression/encryption/FEC")
+    p_send.add_argument("--broadcast", action="store_true", help="Broadcast/loop packets without ACK (for mobile/web receivers)")
     args = parser.parse_args()
     passphrase = args.passphrase
     if args.encrypt and not passphrase:
         passphrase = getpass.getpass("Passphrase: ")
     if args.cmd == "send":
-        send_transfer(args.source, passphrase, args.display, args.camera, args.web)
+        send_transfer(args.source, passphrase, args.display, args.camera, args.web, args.broadcast)
 
 
 if __name__ == "__main__":
