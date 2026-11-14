@@ -31,6 +31,13 @@ The web app now supports **both sending and receiving** on mobile browsers:
 3. Tap **Add to Home screen** to install.
 4. Use **Receive** tab to scan; **Send** tab to pick a file and stream QR codes.
 5. Mobile web uses uncompressed transfers; PC sender should use `--web` for compatibility.
+
+### Laptop → Mobile (no ACK)
+Mobile receivers cannot easily display ACK QR codes, so use broadcast mode:
+```
+py airqr send ./folder --web --broadcast
+```
+This streams packets in a loop; the mobile receiver scans at its own pace (duplicates are ignored).
    Or on Windows without install: `python main.py send ./my_folder`.
 
 ## Web Fallback (PWA) on Mobile
