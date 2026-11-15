@@ -1,5 +1,7 @@
 // AirQR Web Receiver (Chrome/Android BarcodeDetector)
 const video = document.getElementById('video');
+const canvas = document.createElement('canvas');
+const ctx = canvas.getContext('2d');
 const log = (m) => { const p = document.getElementById('status'); if (p) p.textContent = m; console.log(m); };
 
 let detector = null;
@@ -110,9 +112,13 @@ async function startCamera() {
       detector = new BarcodeDetector({ formats: ['qr_code'] });
       scanning = true;
       scanLoop();
-      log('Scanning...');
+      log('Scanning (BarcodeDetector)...');
+    } else if (typeof jsQR !== 'undefined') {
+      scanning = true;
+      scanLoopJsQR();
+      log('Scanning (jsQR fallback)...');
     } else {
-      log('BarcodeDetector not supported. Use Chrome on Android.');
+      log('No QR decoder available.');
     }
   } catch (e) {
     log('Camera error: ' + e.message);
@@ -222,6 +228,20 @@ function finalize() {
     a.download = info.name.split('/').pop();
     a.click();
     log('Saved ' + info.name);
+  }
+}
+
+async function scanLoopJsQR() {
+  while (scanning) {
+    if (video.readyState === video.HAVE_ENOUGH_DATA) {
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const code = jsQR(img.data, img.width, img.height);
+      if (code) window.handleQR(code.data);
+    }
+    await new Promise(r => setTimeout(r, 200));
   }
 }
 

@@ -35,7 +35,7 @@ function encodePacket(pkt) {
   return btoa(s);
 }
 
-async function buildManifestBytes(transferId, files) {
+async function buildManifestBytes(transferId, files, chunkSize) {
   const parts = [];
   for (let i=0;i<8;i++) parts.push(parseInt(transferId.substr(i*2,2),16));
   const sender = "AirQR Web";
@@ -44,7 +44,7 @@ async function buildManifestBytes(transferId, files) {
   pushBytes(parts, sb);
   for (let i=0;i<16;i++) parts.push(0);
   parts.push(0); // parity
-  u32(parts, 800); // chunk size
+  u32(parts, chunkSize); // chunk size
   u32(parts, files.length);
   for (let fi=0; fi<files.length; fi++) {
     const f = files[fi];
@@ -73,7 +73,7 @@ async function startSend() {
   for (const file of input.files) {
     const buf = await file.arrayBuffer();
     const u8 = new Uint8Array(buf);
-    const chunks = chunkBytes(u8, 800);
+    const chunks = chunkBytes(u8, parseInt(document.getElementById('chunkSize').value) || 800);
     const shaBuf = await crypto.subtle.digest('SHA-256', u8);
     const shaHex = Array.from(new Uint8Array(shaBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
     fileObjs.push({ name: file.name, size: file.size, mime: file.type || 'application/octet-stream',
@@ -82,8 +82,9 @@ async function startSend() {
   }
   const tidBytes = crypto.getRandomValues(new Uint8Array(8));
   const transferId = Array.from(tidBytes).map(b=>b.toString(16).padStart(2,'0')).join('');
-  const manifestBytes = await buildManifestBytes(transferId, fileObjs);
-  const manifestChunks = chunkBytes(manifestBytes, 800);
+  const cs = parseInt(document.getElementById('chunkSize').value) || 800;
+  const manifestBytes = await buildManifestBytes(transferId, fileObjs, cs);
+  const manifestChunks = chunkBytes(manifestBytes, cs);
   const packets = [];
   manifestChunks.forEach((mc, i) => {
     packets.push({ transferId, fileId: 0xFFFFFFFF, totalChunks: manifestChunks.length, chunkIndex: i, payload: mc, flags: 8 });
@@ -108,7 +109,8 @@ async function startSend() {
     qrDiv.innerHTML = '';
     try { new QRCode(qrDiv, { text: b64, width: 280, height: 280 }); } catch(e) {}
     status.textContent = `Frame ${idx % packets.length + 1}/${packets.length} (looping)`;
-    await new Promise(r => setTimeout(r, 1200));
+    const fi = parseInt(document.getElementById('frameInterval').value) || 1200;
+    await new Promise(r => setTimeout(r, fi));
     idx++;
   }
 }

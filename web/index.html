@@ -31,6 +31,9 @@
 
     <div id="sendPanel" style="display:none;">
       <input type="file" id="fileInput" multiple />
+      <label>Chunk size (bytes): <input type="number" id="chunkSize" value="800" min="200" max="2000" style="width:90px;" /></label>
+      <label>Frame interval (ms): <input type="number" id="frameInterval" value="1200" min="500" max="3000" style="width:90px;" /></label>
+      <br/>
       <button id="startSend">Start Sending</button>
       <button id="stopSend">Stop</button>
       <div id="qr"></div>
@@ -40,6 +43,7 @@
     <p class="note">Install: browser menu → Add to Home screen. Works offline after first load. Web uses uncompressed transfers for compatibility.</p>
   </div>
   <script src="qrcode.min.js"></script>
+  <script src="jsQR.js"></script>
   <script src="app.js"></script>
   <script src="receiver.js"></script>
   <script src="sender.js"></script>
