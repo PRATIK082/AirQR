@@ -12,12 +12,11 @@ from core.protocol import (Packet, FLAG_COMPRESSED, FLAG_ENCRYPTED, FLAG_FINAL,
                            FLAG_MANIFEST, FLAG_DONE, FLAG_PARITY, FLAG_ACK,
                            make_ack, parse_ack)
 from core.manifest import parse_manifest
-from core.compression import decompress
-from core.crypto import derive_key, decrypt, make_nonce
 from core.chunker import assemble_chunks
 from core.integrity import sha256_file
-from core.recovery import rs_recover
-from qr_utils import QRDisplay, QRScanner
+
+# Heavy deps (zstandard, argon2/cryptography, reedsolo, cv2) imported lazily so
+# `--help` works without full `pip install .`.
 
 
 def is_data_any(s):
@@ -30,6 +29,12 @@ def is_data_any(s):
 
 def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, resume=False):
     os.makedirs(dest, exist_ok=True)
+    try:
+        from qr_utils import QRDisplay, QRScanner
+    except ModuleNotFoundError as e:
+        print(f"Missing dependency for display/camera: {e.name}.")
+        print("Install with: pip install opencv-python \"qrcode[pil]\" Pillow numpy")
+        return
     display = QRDisplay(display_mode)
     scanner = QRScanner(camera_id)
     scanner.__enter__()
@@ -84,6 +89,11 @@ def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, r
         # decrypt if needed
         payload = pkt.payload
         if pkt.flags & FLAG_ENCRYPTED:
+            try:
+                from core.crypto import derive_key, decrypt, make_nonce
+            except ModuleNotFoundError as e:
+                print(f"Missing dependency for decryption: {e.name}. pip install .")
+                return
             if key is None:
                 # prompt passphrase
                 if passphrase is None:
@@ -107,11 +117,15 @@ def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, r
     def all_complete():
         if manifest is None:
             return False
+        try:
+            from core.recovery import rs_recover
+        except ModuleNotFoundError:
+            rs_recover = None
         for fid, fd in files_data.items():
             dc = fd["data_count"]
             pc = fd["parity_count"]
             # try recovery
-            if not all(i in fd["chunks"] for i in range(dc)):
+            if rs_recover is not None and not all(i in fd["chunks"] for i in range(dc)):
                 recovered = rs_recover(fd["chunks"], dc, pc)
                 if recovered:
                     for idx, b in recovered.items():
@@ -172,7 +186,11 @@ def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, r
             pc = fd["parity_count"]
             # recovery one more time
             if not all(i in fd["chunks"] for i in range(dc)):
-                recovered = rs_recover(fd["chunks"], dc, pc)
+                try:
+                    from core.recovery import rs_recover as _rs
+                    recovered = _rs(fd["chunks"], dc, pc)
+                except ModuleNotFoundError:
+                    recovered = None
                 if recovered:
                     for idx, b in recovered.items():
                         fd["chunks"][idx] = b
@@ -183,6 +201,7 @@ def receive_transfer(dest, passphrase=None, display_mode="image", camera_id=0, r
                 continue
             if info.get("compression", 0) == 1:
                 try:
+                    from core.compression import decompress
                     raw_data = decompress(compressed_data)
                 except Exception as e:
                     print(f"Decompression failed: {e}")

@@ -14,9 +14,24 @@
 6. On completion, verify SHA-256 hash shown; confirm save to Downloads.
 7. For executables/archives, a warning is shown before opening.
 
-For laptop→mobile (no ACK), use broadcast mode:
+For laptop→mobile (no ACK), use broadcast mode - needs 2 terminals on PC:
+
+Terminal 1 - QR loop (this is what phone scans):
 ```
-airqr send ./folder --web --broadcast
+airqr send ./folder --web --broadcast --chunk-size 800 --frame-interval 1.2 --qr-scale 0.75
+```
+- `--chunk-size 200-2000` (default 800): smaller = easier to scan but more frames.
+- `--frame-interval 0.5-3.0s` (default 1.2): how long each QR stays. Use 2.0 if phone misses frames.
+- `--qr-scale 0.3-1.0` (default 0.75): PC window size. Use 0.9 for large QR (scan from far), 0.5 for small laptop screens.
+- `--manifest-chunk 800`: usually leave default.
+
+Terminal 2 - serve receiver page to phone (phone does NOT run Python):
+```
+python framework/run.py
+# then on phone browser open: http://192.168.1.3:8765/index.html -> Receive tab -> Enable Camera
+# PC and phone must be on same WiFi/hotspot for this step only.
+# Transfer itself is offline (camera scans screen, no data over WiFi).
+# Tip: open page once -> Add to Home screen -> works offline after that.
 ```
 
 ### B. Phone → PC

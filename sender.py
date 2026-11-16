@@ -13,13 +13,13 @@ from core.protocol import (Packet, FLAG_COMPRESSED, FLAG_ENCRYPTED, FLAG_FINAL,
                            FLAG_MANIFEST, FLAG_DONE, FLAG_PARITY, FLAG_ACK,
                            make_ack, parse_ack)
 from core.manifest import collect_files, build_manifest, guess_mime
-from core.compression import should_compress, compress
-from core.crypto import derive_key, encrypt, make_nonce
 from core.chunker import chunk_bytes
 from core.integrity import sha256_file, sha256_bytes
-from core.recovery import rs_encode_chunks
 from core.adaptive import choose_chunk_size, choose_ec
-from qr_utils import QRDisplay, QRScanner
+
+# NOTE: heavy optional deps (zstandard, argon2/cryptography, reedsolo, cv2)
+# are imported lazily so `airqr send --web --broadcast --help` works
+# without full `pip install .`. Mobile path only needs opencv+qrcode.
 
 MAX_RETRIES = 3
 ACK_TIMEOUT = 2.0
@@ -37,7 +37,8 @@ def is_ack_transfer(s, transfer_id):
 
 
 def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False, broadcast=False,
-                  chunk_size_override=0, parity_override=None, frame_interval=1.2, manifest_chunk=800):
+                  chunk_size_override=0, parity_override=None, frame_interval=1.2, manifest_chunk=800,
+                  qr_scale=0.75):
     files = collect_files(source)
     if not files:
         print("No files found.")
@@ -50,7 +51,18 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     for f in files:
         raw = open(f["path"], "rb").read()
         f["mime"] = guess_mime(f["path"])
-        comp = False if web_mode else should_compress(f["path"], f["mime"])
+        if web_mode:
+            comp = False
+        else:
+            try:
+                from core.compression import should_compress, compress
+            except ModuleNotFoundError as e:
+                print(f"Missing dependency for compression: {e.name}.")
+                print("Install all features with:  pip install .   (or pip install -r requirements.txt)")
+                print("Or use web-compatible mobile mode which needs no extra deps:")
+                print("  airqr send ./folder --web --broadcast")
+                return
+            comp = should_compress(f["path"], f["mime"])
         if comp:
             data = compress(raw)
         else:
@@ -74,11 +86,30 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
         passphrase = None
     encrypted = (not web_mode) and bool(passphrase)
     salt = transfer_id if encrypted else b"\x00" * 16
-    key = derive_key(passphrase, salt) if encrypted else None
+    if encrypted:
+        try:
+            from core.crypto import derive_key
+        except ModuleNotFoundError as e:
+            print(f"Missing dependency for encryption: {e.name}.")
+            print("Install with: pip install .   (needs argon2-cffi + cryptography)")
+            return
+        key = derive_key(passphrase, salt)
+    else:
+        key = None
     if parity_override is not None:
         parity_count = int(parity_override)
     else:
         parity_count = 0 if web_mode else PARITY_COUNT
+    if parity_count > 0:
+        try:
+            from core.recovery import rs_encode_chunks
+        except ModuleNotFoundError as e:
+            print(f"Missing dependency for FEC: {e.name}. Install with: pip install .")
+            print("Falling back to parity=0 (no FEC).")
+            parity_count = 0
+            rs_encode_chunks = None
+    else:
+        rs_encode_chunks = None
 
     sha256s = [sha256_file(f["path"]) for f in files]
     comp_methods = [1 if c else 0 for c in file_compressed]
@@ -100,7 +131,16 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     print("Position receiver camera, then press ENTER to start.")
     input()
 
-    display = QRDisplay(display_mode)
+    display = None
+    try:
+        from qr_utils import QRDisplay
+    except ModuleNotFoundError as e:
+        print(f"Missing dependency for display/camera: {e.name}.")
+        print("Install with: pip install opencv-python \"qrcode[pil]\" Pillow numpy")
+        return
+    display = QRDisplay(display_mode, qr_scale=qr_scale)
+    if encrypted:
+        from core.crypto import encrypt, make_nonce
     if broadcast:
         try:
             mchunks = chunk_bytes(manifest_bytes, manifest_chunk)
@@ -145,7 +185,7 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
             bpkts.append(Packet(transfer_id, 0, 0, 0, b"", FLAG_DONE))
             print("Broadcast mode: streaming packets. Press Ctrl+C to stop.")
             print(f"Params: chunk_size={chunk_size_global} parity={parity_count} "
-                  f"frame_interval={frame_interval}s manifest_chunk={manifest_chunk}")
+                  f"frame_interval={frame_interval}s manifest_chunk={manifest_chunk} qr_scale={qr_scale}")
             while True:
                 for pkt in bpkts:
                     display.show(pkt.to_qr())
@@ -311,13 +351,15 @@ def main():
     p_send.add_argument("--parity", type=int, default=None, help="Override parity/FEC count (0-4, default 2, 0 in --web)")
     p_send.add_argument("--frame-interval", type=float, default=1.2, help="Broadcast frame interval in seconds (0.5-3.0)")
     p_send.add_argument("--manifest-chunk", type=int, default=800, help="Manifest chunk size in bytes")
+    p_send.add_argument("--qr-scale", type=float, default=0.75, help="PC QR window size as fraction of screen width (0.3-1.0, default 0.75). Larger = easier for phone to scan from distance.")
     args = parser.parse_args()
     passphrase = args.passphrase
     if args.encrypt and not passphrase:
         passphrase = getpass.getpass("Passphrase: ")
     if args.cmd == "send":
         send_transfer(args.source, passphrase, args.display, args.camera, args.web, args.broadcast,
-                      args.chunk_size, args.parity, args.frame_interval, args.manifest_chunk)
+                      args.chunk_size, args.parity, args.frame_interval, args.manifest_chunk,
+                      args.qr_scale)
 
 
 if __name__ == "__main__":

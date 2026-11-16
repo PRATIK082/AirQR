@@ -1,10 +1,12 @@
 """Encryption service: AES-256-GCM + Argon2id key derivation."""
 import os
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-from argon2.low_level import hash_secret_raw, Type
 
 
 def derive_key(passphrase: str, salt: bytes) -> bytes:
+    try:
+        from argon2.low_level import hash_secret_raw, Type
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError("argon2")
     salt = salt.ljust(16, b"\x00")[:16]
     return hash_secret_raw(
         secret=passphrase.encode("utf-8"),
@@ -18,11 +20,13 @@ def derive_key(passphrase: str, salt: bytes) -> bytes:
 
 
 def encrypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     aes = AESGCM(key)
     return aes.encrypt(nonce, data, None)
 
 
 def decrypt(data: bytes, key: bytes, nonce: bytes) -> bytes:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
     aes = AESGCM(key)
     return aes.decrypt(nonce, data, None)
 

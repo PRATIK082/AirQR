@@ -24,8 +24,10 @@ def _get_screen_size():
 
 
 class QRDisplay:
-    def __init__(self, mode: str = "image"):
+    def __init__(self, mode: str = "image", qr_scale: float = 0.75, qr_height_scale: float = 0.80):
         self.mode = mode
+        self.qr_scale = min(1.0, max(0.3, float(qr_scale)))
+        self.qr_height_scale = min(1.0, max(0.3, float(qr_height_scale)))
         self.window_name = "QR Transfer - Display"
         self.screen_width, self.screen_height = _get_screen_size()
         self._window_inited = False
@@ -58,8 +60,8 @@ class QRDisplay:
             arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
             h, w = arr.shape[:2]
 
-            max_w = int(self.screen_width * 0.75)
-            max_h = int(self.screen_height * 0.80)
+            max_w = int(self.screen_width * self.qr_scale)
+            max_h = int(self.screen_height * self.qr_height_scale)
             scale = min(max_w / w, max_h / h)
             scale = max(2, int(scale))
 

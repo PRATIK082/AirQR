@@ -1,10 +1,13 @@
 """Forward error correction (Reed-Solomon) and retransmission helpers."""
-from reedsolo import RSCodec
 
 
 def rs_encode_chunks(chunks: list, parity_count: int) -> list:
     if parity_count <= 0 or not chunks:
         return []
+    try:
+        from reedsolo import RSCodec
+    except ModuleNotFoundError:
+        raise ModuleNotFoundError("reedsolo")
     size = max((len(c) for c in chunks), default=0)
     padded = [c.ljust(size, b"\x00") for c in chunks]
     n = len(chunks)
@@ -26,6 +29,10 @@ def rs_recover(chunks: dict, data_count: int, parity_count: int) -> dict:
     missing = [i for i in range(total) if i not in chunks]
     if len(missing) > parity_count or not missing:
         return {} if not missing else None
+    try:
+        from reedsolo import RSCodec
+    except ModuleNotFoundError:
+        return None
     size = max((len(chunks[i]) for i in available), default=0)
     rsc = RSCodec(parity_count)
     recovered = {i: bytearray() for i in missing if i < data_count}
