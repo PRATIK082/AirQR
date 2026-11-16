@@ -2,7 +2,7 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
     <uses-feature android:name="android.hardware.camera.any" />
     <uses-permission android:name="android.permission.CAMERA" />
-    <application android:label="AirQR" android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+    <application android:label="AirQR" android:theme="@style/Theme.AirQR">
         <activity android:name=".MainActivity" android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

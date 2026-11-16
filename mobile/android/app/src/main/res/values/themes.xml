@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <style name="Theme.AirQR" parent="Theme.AppCompat.DayNight.NoActionBar">
+        <item name="colorPrimary">#4F8CFF</item>
+    </style>
+</resources>

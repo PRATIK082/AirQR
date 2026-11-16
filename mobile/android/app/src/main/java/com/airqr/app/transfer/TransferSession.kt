@@ -39,4 +39,22 @@ class TransferSession {
         m.files.forEach { f -> total += f.chunks; have += (chunks[f.order]?.size ?: 0).coerceAtMost(f.chunks) }
         return have to total
     }
+
+    /** Assembled bytes for one manifest file, or null if any chunk is missing. */
+    fun assembledFile(order: Int): ByteArray? {
+        val m = manifest ?: return null
+        val f = m.files.firstOrNull { it.order == order } ?: return null
+        val map = chunks[order] ?: return null
+        if (map.size < f.chunks) return null
+        var len = 0
+        for (i in 0 until f.chunks) len += (map[i] ?: return null).size
+        val out = ByteArray(len)
+        var off = 0
+        for (i in 0 until f.chunks) {
+            val c = map[i] ?: return null
+            c.copyInto(out, off)
+            off += c.size
+        }
+        return out
+    }
 }

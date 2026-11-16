@@ -6,6 +6,7 @@ import java.nio.ByteOrder
 data class ManifestFile(
     val name: String, val size: Long, val compressedSize: Long,
     val sha256: String, val mime: String, val chunks: Int,
+    val compressed: Boolean, val encrypted: Boolean,
     val order: Int
 )
 
@@ -30,9 +31,11 @@ fun parseManifest(b: ByteArray): Manifest? {
             val ml = bb.short.toInt() and 0xFFFF
             val mb = ByteArray(ml); bb.get(mb)
             val chunks = bb.int
-            bb.get(); bb.get(); bb.get()
+            val cm = bb.get().toInt() and 0xFF
+            val enc = bb.get().toInt() and 0xFF
+            bb.get()
             val mtime = bb.long; val order = bb.int
-            files.add(ManifestFile(String(nb), size, csize, sha.joinToString("") { "%02x".format(it) }, String(mb), chunks, order))
+            files.add(ManifestFile(String(nb), size, csize, sha.joinToString("") { "%02x".format(it) }, String(mb), chunks, cm != 0, enc != 0, order))
         }
         Manifest(chunkSize, parity, files)
     } catch (e: Exception) { null }

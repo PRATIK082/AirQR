@@ -13,8 +13,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             MaterialTheme {
                 var tab by remember { mutableStateOf(0) }
-                var log by remember { mutableStateOf("Idle") }
-                var progress by remember { mutableStateOf("0/0") }
                 val params = remember { SenderParams() }
                 var stats by remember { mutableStateOf("Select file to preview chunks.") }
                 Column {
@@ -22,8 +20,8 @@ class MainActivity : ComponentActivity() {
                         Tab(selected = tab == 0, onClick = { tab = 0 }, text = { Text("Receive") })
                         Tab(selected = tab == 1, onClick = { tab = 1 }, text = { Text("Send") })
                     }
-                    if (tab == 0) ReceiverScreen(log, progress) { log = "Camera started (ML Kit)" }
-                    else SenderScreen(params, stats, onPick = { stats = "File picked" }, onStart = { log = "Sending" }, onStop = {})
+                    if (tab == 0) ReceiverScreen()
+                    else SenderScreen(params, stats, onPick = { stats = "File picked" }, onStart = { stats = "Sending" }, onStop = {})
                 }
             }
         }
