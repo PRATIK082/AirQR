@@ -134,9 +134,19 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     display = None
     try:
         from qr_utils import QRDisplay
+        # Pre-check per-mode deps so error names the real package:
+        # ascii needs only qrcode; image needs qrcode+cv2+numpy+PIL.
+        __import__("qrcode")
+        if display_mode == "image":
+            __import__("cv2")
+            __import__("numpy")
     except ModuleNotFoundError as e:
         print(f"Missing dependency for display/camera: {e.name}.")
-        print("Install with: pip install opencv-python \"qrcode[pil]\" Pillow numpy")
+        if display_mode == "image":
+            print("Install with: py -m pip install opencv-python \"qrcode[pil]\" Pillow numpy")
+            print("Or test without camera window: add --display ascii (needs only qrcode).")
+        else:
+            print("Install with: py -m pip install \"qrcode[pil]\" Pillow")
         return
     display = QRDisplay(display_mode, qr_scale=qr_scale)
     if encrypted:

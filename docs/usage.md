@@ -34,6 +34,15 @@ python framework/run.py
 # Tip: open page once -> Add to Home screen -> works offline after that.
 ```
 
+Phone camera shows "not a secure context" or nothing happens? Chrome blocks
+camera on `http://192.168.x.x`. Two fixes:
+- Fix A (easiest): on phone Chrome open `chrome://flags/#unsafely-treat-insecure-origin-as-secure`,
+  add `http://192.168.1.3:8765`, Enable, Relaunch, reopen page.
+- Fix B: on PC run `python framework/run.py --https`, on phone open
+  `https://<PC-IP>:8766/index.html`, accept the self-signed cert warning.
+- Never open `index.html` as `file://` - camera will always be blocked.
+- Also grant camera permission when prompted, use back camera, keep 30-50cm.
+
 ### B. Phone → PC
 1. On phone (sender): select file/folder, tap **Show QR** (fullscreen).
 2. On PC (receiver): `airqr receive --dest ./downloads --display image`

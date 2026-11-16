@@ -1,9 +1,13 @@
 import os
 import sys
 import time
-import cv2
-import numpy as np
-import qrcode
+
+
+def _need(mod: str):
+    try:
+        return __import__(mod)
+    except ImportError:
+        raise ModuleNotFoundError(mod)
 
 
 def _get_screen_size():
@@ -34,6 +38,7 @@ class QRDisplay:
 
     def _init_window(self):
         if self.mode == "image" and not self._window_inited:
+            cv2 = _need("cv2")
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             try:
                 cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
@@ -45,6 +50,7 @@ class QRDisplay:
             self._window_inited = True
 
     def show(self, data: str):
+        qrcode = _need("qrcode")
         qr = qrcode.QRCode(
             version=None,
             error_correction=qrcode.constants.ERROR_CORRECT_L,
@@ -55,6 +61,8 @@ class QRDisplay:
         qr.make(fit=True)
 
         if self.mode == "image":
+            np = _need("numpy")
+            cv2 = _need("cv2")
             img = qr.make_image(fill_color="black", back_color="white").convert("RGB")
             arr = np.array(img)
             arr = cv2.cvtColor(arr, cv2.COLOR_RGB2BGR)
@@ -87,6 +95,8 @@ class QRDisplay:
 
     def show_text(self, text: str):
         if self.mode == "image":
+            cv2 = _need("cv2")
+            np = _need("numpy")
             self._init_window()
             cw = int(self.screen_width * 0.80)
             ch = int(self.screen_height * 0.60)
@@ -124,6 +134,7 @@ class QRDisplay:
     def close(self):
         if self.mode == "image":
             try:
+                cv2 = _need("cv2")
                 cv2.destroyWindow(self.window_name)
             except Exception:
                 pass
@@ -139,6 +150,7 @@ class QRScanner:
 
     def _init_window(self):
         if not self._window_inited:
+            cv2 = _need("cv2")
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             try:
                 cv2.setWindowProperty(self.window_name, cv2.WND_PROP_TOPMOST, 1)
@@ -150,6 +162,7 @@ class QRScanner:
             self._window_inited = True
 
     def __enter__(self):
+        cv2 = _need("cv2")
         self.screen_width, self.screen_height = _get_screen_size()
         self.cap = cv2.VideoCapture(self.camera_id)
         if not self.cap.isOpened():
@@ -167,6 +180,7 @@ class QRScanner:
             self.cap.release()
             self.cap = None
         try:
+            cv2 = _need("cv2")
             cv2.destroyWindow(self.window_name)
         except Exception:
             pass
@@ -177,6 +191,7 @@ class QRScanner:
         or any QR if filter_fn is None."""
         if not self.cap:
             raise RuntimeError("Scanner not opened. Use 'with' block.")
+        cv2 = _need("cv2")
         detector = cv2.QRCodeDetector()
         start = time.time()
         while time.time() - start < timeout:

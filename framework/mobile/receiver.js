@@ -104,8 +104,25 @@ function assembleChunks(chunks, total) {
 }
 
 async function startCamera() {
+  // getUserMedia needs a secure context. http://192.168.x.x is NOT secure
+  // by default in Chrome, so navigator.mediaDevices is undefined there.
+  // Show an actionable message instead of silent failure.
+  if (!window.isSecureContext || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    log('Camera blocked: this page is not a secure context. '
+      + 'Fix A (easiest): on phone Chrome open chrome://flags/#unsafely-treat-insecure-origin-as-secure, '
+      + 'add http://192.168.1.3:8765, Enable, Relaunch. '
+      + 'Fix B: serve via HTTPS: on PC run python framework/run.py --https and open https://<PC-IP>:8766 (accept cert). '
+      + 'Do NOT open index.html as file://.');
+    return;
+  }
   try {
-    const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+    let stream;
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+    } catch (e) {
+      // fallback for older browsers without facingMode ideal syntax
+      stream = await navigator.mediaDevices.getUserMedia({ video: true });
+    }
     video.srcObject = stream;
     await video.play();
     if ('BarcodeDetector' in window) {
@@ -121,7 +138,23 @@ async function startCamera() {
       log('No QR decoder available.');
     }
   } catch (e) {
-    log('Camera error: ' + e.message);
+    const name = (e && e.name) || '';
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      log('Camera error: permission denied or insecure origin. Grant camera permission, use HTTPS or the Chrome insecure-origin flag. (' + e.message + ')');
+    } else if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      log('Camera error: no back camera found, trying any camera... (' + e.message + ')');
+      try {
+        const s2 = await navigator.mediaDevices.getUserMedia({ video: true });
+        video.srcObject = s2;
+        await video.play();
+        scanning = true;
+        if ('BarcodeDetector' in window) { detector = new BarcodeDetector({ formats: ['qr_code'] }); scanLoop(); }
+        else { scanLoopJsQR(); }
+        return;
+      } catch (e2) { log('Camera error: ' + e2.message); }
+    } else {
+      log('Camera error: ' + e.message);
+    }
   }
 }
 
