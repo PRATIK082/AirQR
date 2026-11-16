@@ -249,6 +249,7 @@ async function scanLoopJsQR() {
 window.handleQR = handleQR2;
 
 document.getElementById('start').addEventListener('click', startCamera);
+document.getElementById('stopRecv').addEventListener('click', () => { scanning = false; log('Stopped'); });
 // patch scanLoop to call handleQR
 const _origScan = scanLoop;
 scanLoop = async function() {

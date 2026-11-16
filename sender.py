@@ -36,7 +36,8 @@ def is_ack_transfer(s, transfer_id):
         return False
 
 
-def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False, broadcast=False):
+def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, web_mode=False, broadcast=False,
+                  chunk_size_override=0, parity_override=None, frame_interval=1.2, manifest_chunk=800):
     files = collect_files(source)
     if not files:
         print("No files found.")
@@ -54,7 +55,10 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
             data = compress(raw)
         else:
             data = raw
-        chunk_size = choose_chunk_size(len(raw), f["mime"])
+        if chunk_size_override and chunk_size_override > 0:
+            chunk_size = int(chunk_size_override)
+        else:
+            chunk_size = choose_chunk_size(len(raw), f["mime"])
         chunks = chunk_bytes(data, chunk_size)
         file_plain_chunks.append(chunks)
         file_compressed.append(comp)
@@ -71,7 +75,10 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     encrypted = (not web_mode) and bool(passphrase)
     salt = transfer_id if encrypted else b"\x00" * 16
     key = derive_key(passphrase, salt) if encrypted else None
-    parity_count = 0 if web_mode else PARITY_COUNT
+    if parity_override is not None:
+        parity_count = int(parity_override)
+    else:
+        parity_count = 0 if web_mode else PARITY_COUNT
 
     sha256s = [sha256_file(f["path"]) for f in files]
     comp_methods = [1 if c else 0 for c in file_compressed]
@@ -80,7 +87,10 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
                                    choose_chunk_size(0, ""), "AirQR Sender")
     # fix chunk_size in manifest: use per-file? manifest expects single chunk_size. Use 900.
     # rebuild with a representative chunk size
-    chunk_size_global = 900
+    if chunk_size_override and chunk_size_override > 0:
+        chunk_size_global = int(chunk_size_override)
+    else:
+        chunk_size_global = 900
     manifest_bytes = build_manifest(transfer_id, file_meta, sha256s,
                                    comp_methods, encrypted, salt, parity_count,
                                    chunk_size_global, "AirQR Sender")
@@ -93,7 +103,7 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
     display = QRDisplay(display_mode)
     if broadcast:
         try:
-            mchunks = chunk_bytes(manifest_bytes, MANIFEST_CHUNK)
+            mchunks = chunk_bytes(manifest_bytes, manifest_chunk)
             bpkts = []
             for i, mc in enumerate(mchunks):
                 bpkts.append(Packet(transfer_id, 0xFFFFFFFF, len(mchunks), i, mc, FLAG_MANIFEST))
@@ -134,10 +144,12 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
                     bpkts.append(file_packets_local[fid][ci])
             bpkts.append(Packet(transfer_id, 0, 0, 0, b"", FLAG_DONE))
             print("Broadcast mode: streaming packets. Press Ctrl+C to stop.")
+            print(f"Params: chunk_size={chunk_size_global} parity={parity_count} "
+                  f"frame_interval={frame_interval}s manifest_chunk={manifest_chunk}")
             while True:
                 for pkt in bpkts:
                     display.show(pkt.to_qr())
-                    time.sleep(1.2)
+                    time.sleep(frame_interval)
         except KeyboardInterrupt:
             print("\nStopped.")
         finally:
@@ -149,9 +161,11 @@ def send_transfer(source, passphrase=None, display_mode="image", camera_id=0, we
 
     try:
         # Send manifest
-        mchunks = chunk_bytes(manifest_bytes, MANIFEST_CHUNK)
+        mchunks = chunk_bytes(manifest_bytes, manifest_chunk)
         mtotal = len(mchunks)
         print(f"Sending manifest ({mtotal} chunks)...")
+        print(f"Params: chunk_size={chunk_size_global} parity={parity_count} "
+              f"manifest_chunk={manifest_chunk}")
         for i, mc in enumerate(mchunks):
             pkt = Packet(transfer_id, 0xFFFFFFFF, mtotal, i, mc, FLAG_MANIFEST)
             ok = _send_with_ack(pkt, display, scanner, transfer_id)
@@ -293,12 +307,17 @@ def main():
     p_send.add_argument("--camera", type=int, default=0)
     p_send.add_argument("--web", action="store_true", help="Web-compatible: no compression/encryption/FEC")
     p_send.add_argument("--broadcast", action="store_true", help="Broadcast/loop packets without ACK (for mobile/web receivers)")
+    p_send.add_argument("--chunk-size", type=int, default=0, help="Override chunk size in bytes (0=auto, 200-2000)")
+    p_send.add_argument("--parity", type=int, default=None, help="Override parity/FEC count (0-4, default 2, 0 in --web)")
+    p_send.add_argument("--frame-interval", type=float, default=1.2, help="Broadcast frame interval in seconds (0.5-3.0)")
+    p_send.add_argument("--manifest-chunk", type=int, default=800, help="Manifest chunk size in bytes")
     args = parser.parse_args()
     passphrase = args.passphrase
     if args.encrypt and not passphrase:
         passphrase = getpass.getpass("Passphrase: ")
     if args.cmd == "send":
-        send_transfer(args.source, passphrase, args.display, args.camera, args.web, args.broadcast)
+        send_transfer(args.source, passphrase, args.display, args.camera, args.web, args.broadcast,
+                      args.chunk_size, args.parity, args.frame_interval, args.manifest_chunk)
 
 
 if __name__ == "__main__":

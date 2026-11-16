@@ -1,6 +1,5 @@
 // AirQR Web Sender (mobile/PC browser) - web-compatible (uncompressed, no encryption/FEC)
 let sending = false;
-let sendTask = null;
 
 function u32(arr, v) { arr.push(v & 0xff, (v>>>8)&0xff, (v>>>16)&0xff, (v>>>24)&0xff); }
 function u64(arr, v) {
@@ -14,6 +13,13 @@ function chunkBytes(u8, size) {
   for (let i=0;i<u8.length;i+=size) out.push(u8.slice(i, i+size));
   if (out.length===0) out.push(new Uint8Array(0));
   return out;
+}
+
+function getSenderParams() {
+  const chunkSize = Math.min(2000, Math.max(200, parseInt(document.getElementById('chunkSize').value) || 800));
+  const frameMs = Math.min(3000, Math.max(500, parseInt(document.getElementById('frameInterval').value) || 1200));
+  const qrSize = Math.min(480, Math.max(180, parseInt(document.getElementById('qrSize').value) || 280));
+  return { chunkSize, frameMs, qrSize, parity: 0 };
 }
 
 function encodePacket(pkt) {
@@ -65,15 +71,38 @@ async function buildManifestBytes(transferId, files, chunkSize) {
   return new Uint8Array(parts);
 }
 
+function updateSendPreview() {
+  const input = document.getElementById('fileInput');
+  const stats = document.getElementById('sendStats');
+  if (!input.files.length) { stats.textContent = 'Select files to preview chunks.'; return; }
+  const { chunkSize, frameMs } = getSenderParams();
+  let totalBytes = 0, totalChunks = 0;
+  const lines = [];
+  for (const f of input.files) {
+    const n = Math.max(1, Math.ceil(f.size / chunkSize));
+    totalBytes += f.size;
+    totalChunks += n;
+    lines.push(`${f.name}: ${f.size} bytes -> ${n} chunks`);
+  }
+  const manifestFrames = 1;
+  const totalFrames = totalChunks + manifestFrames + 1; // +done
+  const estSec = Math.round(totalFrames * frameMs / 1000);
+  stats.textContent = lines.join('\n') +
+    `\nChunk size: ${chunkSize} bytes | Frame: ${frameMs} ms` +
+    `\nTotal frames: ${totalFrames} (data ${totalChunks} + manifest ${manifestFrames} + done 1)` +
+    `\nEst. loop time: ~${estSec}s`;
+}
+
 async function startSend() {
   const input = document.getElementById('fileInput');
   if (!input.files.length) { document.getElementById('sendStatus').textContent = 'No file selected'; return; }
   sending = true;
+  const { chunkSize, frameMs, qrSize } = getSenderParams();
   const fileObjs = [];
   for (const file of input.files) {
     const buf = await file.arrayBuffer();
     const u8 = new Uint8Array(buf);
-    const chunks = chunkBytes(u8, parseInt(document.getElementById('chunkSize').value) || 800);
+    const chunks = chunkBytes(u8, chunkSize);
     const shaBuf = await crypto.subtle.digest('SHA-256', u8);
     const shaHex = Array.from(new Uint8Array(shaBuf)).map(b=>b.toString(16).padStart(2,'0')).join('');
     fileObjs.push({ name: file.name, size: file.size, mime: file.type || 'application/octet-stream',
@@ -82,9 +111,8 @@ async function startSend() {
   }
   const tidBytes = crypto.getRandomValues(new Uint8Array(8));
   const transferId = Array.from(tidBytes).map(b=>b.toString(16).padStart(2,'0')).join('');
-  const cs = parseInt(document.getElementById('chunkSize').value) || 800;
-  const manifestBytes = await buildManifestBytes(transferId, fileObjs, cs);
-  const manifestChunks = chunkBytes(manifestBytes, cs);
+  const manifestBytes = await buildManifestBytes(transferId, fileObjs, chunkSize);
+  const manifestChunks = chunkBytes(manifestBytes, chunkSize);
   const packets = [];
   manifestChunks.forEach((mc, i) => {
     packets.push({ transferId, fileId: 0xFFFFFFFF, totalChunks: manifestChunks.length, chunkIndex: i, payload: mc, flags: 8 });
@@ -101,16 +129,22 @@ async function startSend() {
   packets.push({ transferId, fileId: 0, totalChunks: 0, chunkIndex: 0, payload: new Uint8Array(0), flags: 16 });
 
   const qrDiv = document.getElementById('qr');
+  const bar = document.getElementById('sendBar');
   let idx = 0;
   const status = document.getElementById('sendStatus');
+  const stats = document.getElementById('sendStats');
   while (sending) {
     const p = packets[idx % packets.length];
     const b64 = encodePacket(p);
     qrDiv.innerHTML = '';
-    try { new QRCode(qrDiv, { text: b64, width: 280, height: 280 }); } catch(e) {}
-    status.textContent = `Frame ${idx % packets.length + 1}/${packets.length} (looping)`;
-    const fi = parseInt(document.getElementById('frameInterval').value) || 1200;
-    await new Promise(r => setTimeout(r, fi));
+    try { new QRCode(qrDiv, { text: b64, width: qrSize, height: qrSize }); } catch(e) {}
+    const pct = Math.round(((idx % packets.length) + 1) / packets.length * 100);
+    status.textContent = `Frame ${idx % packets.length + 1}/${packets.length} (${pct}%, looping)`;
+    if (bar) bar.style.width = pct + '%';
+    stats.textContent = `Transfer ${transferId.slice(0,8)}… | chunk ${chunkSize}B | frame ${frameMs}ms | QR ${qrSize}px | total ${packets.length} frames`;
+    const liveFrameMs = getSenderParams().frameMs;
+    const liveQr = getSenderParams().qrSize;
+    await new Promise(r => setTimeout(r, liveFrameMs));
     idx++;
   }
 }
@@ -119,6 +153,9 @@ function stopSend() { sending = false; }
 
 document.getElementById('startSend').addEventListener('click', () => { if (!sending) startSend(); });
 document.getElementById('stopSend').addEventListener('click', stopSend);
+document.getElementById('fileInput').addEventListener('change', updateSendPreview);
+document.getElementById('chunkSize').addEventListener('input', updateSendPreview);
+document.getElementById('frameInterval').addEventListener('input', updateSendPreview);
 
 // tab switching
 document.getElementById('tabRecv').addEventListener('click', () => {

@@ -13,6 +13,12 @@
     #qr { margin-top: 1rem; display: flex; justify-content: center; }
     .tabs button { background: #2a2f3a; }
     .tabs button.active { background: #4f8cff; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin: 0.8rem 0; }
+    .grid label { background: #1f2530; padding: 0.6rem; border-radius: 10px; font-size: 0.9rem; }
+    .grid input, .grid select { width: 100%; margin-top: 0.3rem; padding: 0.4rem; border-radius: 6px; border: 1px solid #333; background: #0b0d12; color: #fff; }
+    #sendStats, #recvStats { font-family: monospace; font-size: 0.85rem; background: #0b0d12; padding: 0.8rem; border-radius: 10px; margin-top: 0.6rem; white-space: pre-wrap; }
+    .bar { height: 10px; background: #2a2f3a; border-radius: 6px; overflow: hidden; margin-top: 0.5rem; }
+    .bar > div { height: 100%; background: #4f8cff; width: 0%; }
   </style>
 </head>
 <body>
@@ -25,22 +31,38 @@
 
     <div id="recvPanel">
       <button id="start">Enable Camera (Receiver)</button>
+      <button id="stopRecv">Stop</button>
       <video id="video" autoplay playsinline style="width:100%;margin-top:1rem;border-radius:12px;"></video>
       <p id="status" style="margin-top:1rem;font-family:monospace;">Idle</p>
+      <div id="recvStats">No transfer yet.</div>
+      <div class="bar"><div id="recvBar"></div></div>
     </div>
 
     <div id="sendPanel" style="display:none;">
       <input type="file" id="fileInput" multiple />
-      <label>Chunk size (bytes): <input type="number" id="chunkSize" value="800" min="200" max="2000" style="width:90px;" /></label>
-      <label>Frame interval (ms): <input type="number" id="frameInterval" value="1200" min="500" max="3000" style="width:90px;" /></label>
-      <br/>
+      <div class="grid">
+        <label>Chunk size (bytes)
+          <input type="number" id="chunkSize" value="800" min="200" max="2000" step="50" />
+        </label>
+        <label>Frame interval (ms)
+          <input type="number" id="frameInterval" value="1200" min="500" max="3000" step="100" />
+        </label>
+        <label>QR display size (px)
+          <input type="number" id="qrSize" value="280" min="180" max="480" step="20" />
+        </label>
+        <label>Parity / FEC (web=0)
+          <input type="number" id="parityCount" value="0" min="0" max="4" step="1" disabled />
+        </label>
+      </div>
       <button id="startSend">Start Sending</button>
       <button id="stopSend">Stop</button>
       <div id="qr"></div>
       <p id="sendStatus" style="margin-top:1rem;font-family:monospace;">Idle</p>
+      <div id="sendStats">Select files to preview chunks.</div>
+      <div class="bar"><div id="sendBar"></div></div>
     </div>
 
-    <p class="note">Install: browser menu → Add to Home screen. Works offline after first load. Web uses uncompressed transfers for compatibility.</p>
+    <p class="note">Install: browser menu → Add to Home screen. Works offline after first load. Web uses uncompressed transfers for compatibility. For full-speed native scanning, use the Android/iOS apps in <code>mobile/</code>.</p>
   </div>
   <script src="qrcode.min.js"></script>
   <script src="jsQR.js"></script>
