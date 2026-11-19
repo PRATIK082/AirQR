@@ -1,8 +1,19 @@
-# AirQR — Offline QR-Code File Transfer
+# AirQR — Take Any File Anywhere. Leave Zero Trace.
+
+> **Every download today leaves a trail** — ISP logs, Wi-Fi records, cloud audits, USB fingerprints, email attachments.
+> AirQR moves files as **light on a screen**. No packets, no network, no logs — nothing to intercept, trace, or subpoena.
 
 ![Animated demo](docs/demo/demo.gif)
 
-Transfer files between a PC and a phone (or PC↔PC) using only animated QR codes on the sender's screen and the receiver's camera. **No internet, Wi-Fi, Bluetooth, mobile data, cloud, account, pairing, or server required.**
+## Why AirQR exists
+- 📵 **Zero-trace transfer** — screen → camera. No internet, Wi-Fi, Bluetooth, USB data, cloud, account, pairing, or server. There is simply nothing on any network to record.
+- 🔒 **Secure data, physically contained** — files never traverse a cable or router you don't control. What the camera can't see, nobody can copy.
+- 🕵️ **No forensic footprint on the PC** — no browser history of a download, no USB insertion event, no cloud sync log. The sender just displays QRs.
+- ✈️ **Works where networks don't (or must not)** — airplanes, vaults, labs, field sites, locked-down offices. If you can see the screen, you can receive.
+- 📱 **Non-technical friendly** — install one app, tap Start Scan, point at the screen. Files land in Downloads by themselves.
+- 🛡️ **Still verifiable** — CRC32 per chunk + SHA-256 per file, AES-256-GCM + Argon2id optional encryption, Reed-Solomon FEC.
+
+Transfer files between a PC and a phone (or PC↔PC) using only animated QR codes on the sender's screen and the receiver's camera.
 
 ## Features
 - Fully offline binary protocol (chunked, CRC32 + SHA-256)
