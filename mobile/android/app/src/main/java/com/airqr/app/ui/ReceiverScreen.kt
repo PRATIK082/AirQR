@@ -245,7 +245,7 @@ fun ReceiverScreen() {
         if (total > 0) {
             Text("$have / $total chunks - $fileCount file(s)")
             LinearProgressIndicator(
-                progress = { have.toFloat() / total.coerceAtLeast(1) },
+                progress = have.toFloat() / total.coerceAtLeast(1).toFloat(),
                 modifier = Modifier.fillMaxWidth()
             )
         }
